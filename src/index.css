@@ -1,0 +1,279 @@
+@import "tailwindcss";
+
+:root {
+  --pink: #ec4899;
+  --green: #059669;
+  --ink: #263238;
+  --muted: #64748b;
+  --bg: #fff7fb;
+  --card: #fff;
+  --line: #f1e5eb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif;
+  background: linear-gradient(135deg, #fff7fb, #f0fdfa);
+  color: var(--ink);
+}
+
+header {
+  max-width: 1050px;
+  margin: auto;
+  padding: 28px 18px 10px;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(25px, 5vw, 38px);
+}
+
+header p {
+  color: var(--muted);
+  margin: 7px 0;
+}
+
+.tag {
+  color: var(--pink);
+  font-size: 13px;
+}
+
+main {
+  max-width: 1050px;
+  margin: auto;
+  padding: 12px 18px 50px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 14px;
+}
+
+.card {
+  grid-column: span 6;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 20px;
+  box-shadow: 0 8px 30px #a855f710;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.stat {
+  background: #fff8fb;
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.stat b {
+  display: block;
+  font-size: 22px;
+  margin-top: 4px;
+}
+
+.stat small, label {
+  color: var(--muted);
+}
+
+h2 {
+  font-size: 18px;
+  margin: 0 0 15px;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 11px;
+}
+
+label {
+  display: block;
+  font-size: 13px;
+}
+
+input, select, button {
+  font: inherit;
+}
+
+input, select {
+  width: 100%;
+  margin-top: 5px;
+  padding: 10px 11px;
+  border: 1px solid #ded5da;
+  border-radius: 11px;
+  background: white;
+}
+
+button {
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 15px;
+  font-weight: 700;
+  cursor: pointer;
+  background: var(--green);
+  color: white;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pink {
+  background: var(--pink);
+}
+
+.ghost {
+  background: #f3f4f6;
+  color: #475569;
+}
+
+.danger {
+  background: #fff1f2;
+  color: #e11d48;
+  padding: 6px 9px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.list {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  background: #fafafa;
+  border-radius: 13px;
+}
+
+.item span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.empty {
+  text-align: center;
+  color: #94a3b8;
+  padding: 16px;
+}
+
+.progress {
+  height: 11px;
+  background: #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.progress i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--green), #34d399);
+  width: 0;
+}
+
+.notice {
+  background: #fffbeb;
+  color: #92400e;
+  border-radius: 13px;
+  padding: 11px;
+  font-size: 13px;
+  margin-top: 13px;
+}
+
+.footer {
+  font-size: 12px;
+  color: #94a3b8;
+  text-align: center;
+  margin-top: 25px;
+}
+
+.record-tools {
+  display: grid;
+  grid-template-columns: 2fr 1fr auto;
+  gap: 9px;
+}
+
+.record-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.badge {
+  background: #ecfdf5;
+  color: #047857;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.badge.manual {
+  background: #fdf2f8;
+  color: #be185d;
+}
+
+.record-name {
+  overflow-wrap: anywhere;
+}
+
+.ai-box {
+  background: #fdf2f8;
+  border: 1px solid #fbcfe8;
+  border-radius: 16px;
+  padding: 14px;
+  margin-bottom: 15px;
+}
+
+.ai-box img {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  border-radius: 12px;
+  margin-top: 10px;
+}
+
+.status {
+  font-size: 13px;
+  color: #9d174d;
+  margin-top: 9px;
+  min-height: 18px;
+}
+
+@media (max-width: 720px) {
+  .card {
+    grid-column: 1 / -1;
+  }
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .fields, .record-tools {
+    grid-template-columns: 1fr;
+  }
+}

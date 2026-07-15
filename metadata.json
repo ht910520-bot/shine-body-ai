@@ -1,0 +1,8 @@
+{
+  "name": "閃耀體態 AI 飲食卡路里管家",
+  "description": "提供繁體中文介面的健康體態與卡路里飲食管家，支援 AI 飲食照片分析、運動與水分追蹤，並有本機備份功能。",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
