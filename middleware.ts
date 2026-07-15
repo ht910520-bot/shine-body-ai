@@ -8,12 +8,19 @@ function readCookie(request: Request, name: string) {
   return "";
 }
 
-export default function middleware(request: Request) {
+async function sessionTokenFor(accessCode: string) {
+  const bytes = new TextEncoder().encode(accessCode);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export default async function middleware(request: Request) {
   const url = new URL(request.url);
   const publicPaths = new Set(["/login.html", "/api/login", "/api/logout", "/api/health"]);
   if (publicPaths.has(url.pathname)) return;
 
-  const expectedToken = process.env.SESSION_TOKEN || "";
+  const accessCode = process.env.APP_ACCESS_CODE || "";
+  const expectedToken = accessCode ? await sessionTokenFor(accessCode) : "";
   const sessionToken = readCookie(request, "shine_auth");
   if (expectedToken && sessionToken === expectedToken) return;
 

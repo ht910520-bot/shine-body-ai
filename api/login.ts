@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 const attempts = new Map<string, { count: number; resetAt: number }>();
 
@@ -16,8 +16,7 @@ export default function handler(req: any, res: any) {
   }
 
   const accessCode = process.env.APP_ACCESS_CODE || "";
-  const sessionToken = process.env.SESSION_TOKEN || "";
-  if (!accessCode || !sessionToken) {
+  if (!accessCode) {
     return res.status(500).json({ error: "登入服務尚未完成設定。" });
   }
 
@@ -40,7 +39,7 @@ export default function handler(req: any, res: any) {
   attempts.delete(client);
   res.setHeader(
     "Set-Cookie",
-    `shine_auth=${encodeURIComponent(sessionToken)}; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=Lax`
+    `shine_auth=${createHash("sha256").update(accessCode).digest("hex")}; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=Lax`
   );
   return res.status(200).json({ ok: true });
 }
