@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
+import analyzeFoodText from "./api/analyze-food-text.ts";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 
@@ -31,6 +32,10 @@ async function startServer() {
 
   // Set limits for base64 food image payloads
   app.use(express.json({ limit: "15mb" }));
+
+  app.post("/api/analyze-food-text", async (req, res) => {
+    await analyzeFoodText(req, res);
+  });
 
   // AI Food Analysis API Endpoint
   const analysisRequests = new Map<string, { count: number; resetAt: number }>();
@@ -183,3 +188,4 @@ async function startServer() {
 }
 
 startServer();
+
