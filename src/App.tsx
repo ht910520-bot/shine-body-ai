@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from "react";
 
 // LocalStorage and DB keys matching original safe version
@@ -414,7 +415,7 @@ export default function App() {
     setFoodCarbs(String(divide(aiFood.carbs)));
     setFoodFat(String(divide(aiFood.fat)));
     
-    setAiStatus(`Gemini AI 分析完成：整份共 ${Math.round(Number(aiFood.calories) || 0)} kcal${people > 1 ? `，除以 ${people} 人後每人約 ${Math.round(divide(aiFood.calories))} kcal` : '，目前未分食'}。${aiFood.description || '請確認數字後再新增。'}`);
+    setAiStatus(`AI 分析完成：整份共 ${Math.round(Number(aiFood.calories) || 0)} kcal${people > 1 ? `，除以 ${people} 人後每人約 ${Math.round(divide(aiFood.calories))} kcal` : '，目前未分食'}。${aiFood.description || '請確認數字後再新增。'}`);
   };
 
   useEffect(() => {
@@ -990,8 +991,8 @@ export default function App() {
           <section className="card">
             <h2>🍱 新增飲食</h2>
             <div className="ai-box food-text-box">
-              <b>🔎 用一句話搜尋熱量</b>
-              <p className="ai-hint">輸入品牌商品或一般餐點；資料不夠時，我會先問你一個問題。</p>
+              <b>🧠 NVIDIA AI 估算熱量</b>
+              <p className="ai-hint">輸入品牌商品或一般餐點；NVIDIA AI 會在資料不足時先問你一個問題。</p>
               <form onSubmit={handleFoodTextSubmit}>
                 <div className="food-prompt-row">
                   <textarea
@@ -1003,7 +1004,7 @@ export default function App() {
                     onChange={(e) => setFoodPrompt(e.target.value)}
                   />
                   <button className="pink" type="submit" disabled={!foodPrompt.trim() || isSearchingFood}>
-                    {isSearchingFood ? "搜尋中…" : foodConversation.length ? "送出回答" : "搜尋估算"}
+                    {isSearchingFood ? "分析中…" : foodConversation.length ? "送出回答" : "AI 估算"}
                   </button>
                 </div>
               </form>
