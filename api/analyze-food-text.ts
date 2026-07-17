@@ -39,7 +39,7 @@ function parseJson(text: string) {
   } catch {
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
-    if (start === -1 || end <= start) throw new Error("AI 回覆格式不完整");
+    if (start === -1 || end <= start) throw new Error("AI ???澆?銝???);
     return JSON.parse(cleaned.slice(start, end + 1));
   }
 }
@@ -47,14 +47,17 @@ function parseJson(text: string) {
 function isProviderLimitError(error: any) {
   const message = String(error?.message || error || "").toLowerCase();
   return error?.status === 429
+    || error?.status === 503
     || error?.code === 429
     || message.includes("quota")
     || message.includes("rate limit")
-    || message.includes("resource_exhausted");
+    || message.includes("resource_exhausted")
+    || message.includes("resourceexhausted")
+    || message.includes("service unavailable");
 }
 
 async function callNvidia(provider: Provider, prompt: string) {
-  if (!provider.apiKey) throw new Error(`${provider.name} API key 未設定`);
+  if (!provider.apiKey) throw new Error(`${provider.name} API key ?芾身摰);
   const response = await fetch(NVIDIA_ENDPOINT, {
     method: "POST",
     headers: {
@@ -80,40 +83,40 @@ async function callNvidia(provider: Provider, prompt: string) {
   }
 
   const text = payload?.choices?.[0]?.message?.content;
-  if (typeof text !== "string" || !text.trim()) throw new Error(`${provider.name} 沒有回傳內容`);
+  if (typeof text !== "string" || !text.trim()) throw new Error(`${provider.name} 瘝???批捆`);
   return text;
 }
 
 function fallbackEstimate(message: string) {
   const text = message.toLowerCase();
-  if (/飯糰|饭团|御飯糰|御饭团/.test(text)) {
+  if (/憌舐陸|擖剖|敺⊿ㄞ蝟院敺⊿平??.test(text)) {
     return {
       name: message,
       calories: 380,
       protein: 10,
       carbs: 55,
       fat: 12,
-      description: "AI 暫時無法連線，先以一般便利商店飯糰一個估算；實際口味與大小可能不同。"
+      description: "AI ?急??⊥????嚗?隞乩??砌噶?拙?摨ㄞ蝟唬??摯蝞?撖阡????之撠?賭???
     };
   }
-  if (/雞胸.*便當|便當.*雞胸|鸡胸.*便当|便当.*鸡胸/.test(text)) {
+  if (/?.*靘輻|靘輻.*?|曏∟.*靘踹?|靘踹?.*曏∟/.test(text)) {
     return {
       name: message,
       calories: 650,
       protein: 40,
       carbs: 75,
       fat: 18,
-      description: "AI 暫時無法連線，先以雞胸肉、白飯、兩樣配菜的一般便當估算。"
+      description: "AI ?急??⊥????嚗?隞仿??貉??憌胯璅????銝?砌噶?嗡摯蝞?
     };
   }
-  if (/便當|便当/.test(text)) {
+  if (/靘輻|靘踹?/.test(text)) {
     return {
       name: message,
       calories: 700,
       protein: 30,
       carbs: 85,
       fat: 24,
-      description: "AI 暫時無法連線，先以一份台式便當的常見份量估算。"
+      description: "AI ?急??⊥????嚗?隞乩?隞賢撘噶?嗥?撣貉?隞賡?隡啁???
     };
   }
   return null;
@@ -122,11 +125,11 @@ function fallbackEstimate(message: string) {
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
-    return res.status(405).json({ error: "只接受 POST 請求" });
+    return res.status(405).json({ error: "?芣??POST 隢?" });
   }
 
   const ip = getClientIp(req);
-  if (!allowRequest(ip)) return res.status(429).json({ error: "查詢次數太頻繁，請稍後再試" });
+  if (!allowRequest(ip)) return res.status(429).json({ error: "?亥岷甈⊥憭芷蝜?隢?敺?閰? });
 
   try {
     const providers: Provider[] = [
@@ -143,7 +146,7 @@ export default async function handler(req: any, res: any) {
     ].filter((provider) => provider.apiKey);
 
     if (!providers.length) {
-      return res.status(500).json({ error: "伺服器尚未設定 NVIDIA_DEEPSEEK_API_KEY 或 NVIDIA_API_KEY" });
+      return res.status(500).json({ error: "隡箸??典??芾身摰?NVIDIA_DEEPSEEK_API_KEY ??NVIDIA_API_KEY" });
     }
 
     const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
@@ -154,30 +157,20 @@ export default async function handler(req: any, res: any) {
           .map((item: any) => ({ role: item.role, content: item.content.slice(0, 500) }))
       : [];
 
-    if (!message) return res.status(400).json({ error: "請輸入吃了什麼" });
-    if (message.length > 500) return res.status(400).json({ error: "內容請控制在 500 字以內" });
+    if (!message) return res.status(400).json({ error: "隢撓?亙?鈭?暻? });
+    if (message.length > 500) return res.status(400).json({ error: "?批捆隢?嗅 500 摮誑?? });
 
     const conversation = [...history, { role: "user", content: message }]
-      .map((item) => `${item.role === "user" ? "使用者" : "營養助理"}：${item.content}`)
+      .map((item) => `${item.role === "user" ? "雿輻?? : "???拍?"}嚗?{item.content}`)
       .join("\n");
 
-    const prompt = `你是台灣飲食熱量估算助理。請依你的營養知識，把使用者的自然語言轉成一筆飲食紀錄。
+    const prompt = `雿?啁憌脤??梢?隡啁??拍???靘???擗霅??蝙?刻??芰隤?頧?銝蝑ㄡ憌???
+閬?嚗?1. 雿輻蝜?銝剜???????雯頝舀?撠??銝??雯????其?皞?????隢?蝣箸?蝷箇隡啁???2. ?仿?暺歇頞喳??Ⅱ嚗?乩摯蝞隞賡??蜓憌???撌桃??憿臬蔣?輻????芸?銝????銝陛?剔?????3. 撠店撌脫??拇活雿輻???荔??蝙?刻”蝷箝?乩摯??撠曹?閬?餈賢?嚗?典??虜閬遢?摯蝞蒂??身??4. ?梢???擗??賭誨銵券活撖阡????蜇???芰??憭抒?擗??臭??詨????隡啁???5. ?撓??JSON嚗?閬?Markdown嚗?閬?憭牧??
+?閬蕭??頛詨嚗?{"status":"clarify","question":"銝??憿?,"summary":"?桀??圾"}
 
-規則：
-1. 使用繁體中文。這個服務沒有即時網路搜尋能力，不要捏造網址或引用來源；品牌商品請明確標示為估算。
-2. 若餐點已足夠明確，直接估算。若份量、主食或配菜差異會明顯影響結果，只問一個最重要且簡短的問題。
-3. 對話已有兩次使用者訊息，或使用者表示「直接估」，就不要再追問，改用合理常見份量估算並列出假設。
-4. 熱量與營養素都代表這次實際吃下的總量；未知的三大營養素可依典型配方合理估算。
-5. 僅輸出 JSON，不要 Markdown，不要額外說明。
+?臭摯蝞?頛詨嚗?{"status":"ready","food":{"name":"擗??迂","calories":?湔,"protein":?詨?,"carbs":?詨?,"fat":?詨?,"description":"隡啁?靘??遢??閮?},"confidence":"high|medium|low","assumptions":["?身銝"]}
 
-需要追問時輸出：
-{"status":"clarify","question":"一個問題","summary":"目前理解"}
-
-可估算時輸出：
-{"status":"ready","food":{"name":"餐點名稱","calories":整數,"protein":數字,"carbs":數字,"fat":數字,"description":"估算依據與份量假設"},"confidence":"high|medium|low","assumptions":["假設一"]}
-
-對話：
-${conversation}`;
+撠店嚗?${conversation}`;
 
     let responseText = "";
     let usedProvider: Provider | undefined;
@@ -201,16 +194,16 @@ ${conversation}`;
           status: "ready",
           food: fallbackFood,
           confidence: "low",
-          assumptions: ["NVIDIA API 暫時無法使用，採內建常見份量估算"],
+          assumptions: ["NVIDIA API ?急??⊥?雿輻嚗?批遣撣貉?隞賡?隡啁?"],
           sources: [],
-          provider: "內建常見份量估算（NVIDIA API 暫時無法使用）",
-          warning: "目前無法連線 NVIDIA AI，這筆數字是暫時估算；稍後可重新搜尋。"
+          provider: "?批遣撣貉?隞賡?隡啁?嚗VIDIA API ?急??⊥?雿輻嚗?,
+          warning: "?桀??⊥???? NVIDIA AI嚗??詨??舀?摯蝞?蝔??舫??唳?撠?
         });
       }
       if (lastError?.status === 401 || lastError?.status === 403) {
-        return res.status(502).json({ code: "NVIDIA_API_KEY_INVALID", error: "NVIDIA API Key 無效，請檢查 Vercel 的 NVIDIA API 設定" });
+        return res.status(502).json({ code: "NVIDIA_API_KEY_INVALID", error: "NVIDIA API Key ?⊥?嚗?瑼Ｘ Vercel ??NVIDIA API 閮剖?" });
       }
-      throw lastError || new Error("NVIDIA AI 沒有回傳內容");
+      throw lastError || new Error("NVIDIA AI 瘝???批捆");
     }
 
     const parsed = parseJson(responseText);
@@ -226,7 +219,7 @@ ${conversation}`;
 
     const food = parsed.food;
     if (!food || !food.name || !Number.isFinite(Number(food.calories))) {
-      throw new Error("AI 無法產生有效的熱量估算");
+      throw new Error("AI ?⊥??Ｙ?????摯蝞?);
     }
 
     return res.status(200).json({
@@ -237,17 +230,17 @@ ${conversation}`;
         protein: Math.max(0, Math.round((Number(food.protein) || 0) * 10) / 10),
         carbs: Math.max(0, Math.round((Number(food.carbs) || 0) * 10) / 10),
         fat: Math.max(0, Math.round((Number(food.fat) || 0) * 10) / 10),
-        description: String(food.description || "依常見份量估算")
+        description: String(food.description || "靘虜閬遢?摯蝞?)
       },
       confidence: parsed.confidence || "medium",
       assumptions: Array.isArray(parsed.assumptions) ? parsed.assumptions.slice(0, 5) : [],
       sources: [],
       provider: `${usedProvider?.name} (${usedProvider?.model})`,
-      warning: "NVIDIA AI 依模型知識估算，未連接即時網路搜尋；請在新增前確認份量。"
+      warning: "NVIDIA AI 靘芋?霅摯蝞??芷??單?蝬脰楝??嚗??冽憓?蝣箄?隞賡???
     });
   } catch (error: any) {
     console.error("Text food analysis error:", error);
-    return res.status(500).json({ error: `搜尋估算失敗：${error?.message || error}` });
+    return res.status(500).json({ error: `??隡啁?憭望?嚗?{error?.message || error}` });
   }
 }
 
