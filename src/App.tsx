@@ -506,7 +506,7 @@ export default function App() {
       const confidenceLabel = result.confidence === 'high' ? '高' : result.confidence === 'low' ? '低' : '中';
       const answer = `${result.food.name}：約 ${result.food.calories} kcal。${result.food.description || ''}`;
       setFoodConversation([...nextConversation, { role: 'assistant', content: answer }]);
-      setAiStatus(`網路搜尋估算完成（可信度：${confidenceLabel}）。數字已帶入下方，請確認後按「新增飲食」。`);
+      setAiStatus(`${result.warning ? `${result.warning} ` : ''}估算完成（可信度：${confidenceLabel}）。數字已帶入下方，請確認後按「新增飲食」。`);
     } catch (error: any) {
       setFoodConversation([...nextConversation, { role: 'assistant', content: `目前無法完成搜尋：${error.message || error}` }]);
       setAiStatus("搜尋失敗，可再試一次或直接手動輸入。");
