@@ -1,15 +1,15 @@
-import { GoogleGenAI } from "@google/genai";
-
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
 };
 
-type Source = {
-  title: string;
-  url: string;
+type Provider = {
+  name: string;
+  model: string;
+  apiKey?: string;
 };
 
+const NVIDIA_ENDPOINT = process.env.NVIDIA_API_BASE_URL || "https://integrate.api.nvidia.com/v1/chat/completions";
 const rateLimit = new Map<string, { count: number; resetAt: number }>();
 const MAX_REQUESTS_PER_HOUR = 20;
 
@@ -44,26 +44,44 @@ function parseJson(text: string) {
   }
 }
 
-function collectSources(response: any): Source[] {
-  const found = new Map<string, Source>();
-  for (const candidate of response?.candidates || []) {
-    for (const chunk of candidate?.groundingMetadata?.groundingChunks || []) {
-      const web = chunk?.web;
-      if (web?.uri && !found.has(web.uri)) {
-        found.set(web.uri, { title: web.title || "參考資料", url: web.uri });
-      }
-    }
-  }
-  return [...found.values()].slice(0, 5);
-}
-
-function isQuotaError(error: any) {
+function isProviderLimitError(error: any) {
   const message = String(error?.message || error || "").toLowerCase();
-  return error?.status === "RESOURCE_EXHAUSTED"
+  return error?.status === 429
     || error?.code === 429
     || message.includes("quota")
-    || message.includes("resource_exhausted")
-    || message.includes("rate limit");
+    || message.includes("rate limit")
+    || message.includes("resource_exhausted");
+}
+
+async function callNvidia(provider: Provider, prompt: string) {
+  if (!provider.apiKey) throw new Error(`${provider.name} API key 未設定`);
+  const response = await fetch(NVIDIA_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${provider.apiKey}`
+    },
+    body: JSON.stringify({
+      model: provider.model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_tokens: 900,
+      stream: false
+    })
+  });
+
+  const payload: any = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error: any = new Error(payload?.error?.message || `NVIDIA API HTTP ${response.status}`);
+    error.status = response.status;
+    error.code = payload?.error?.code;
+    throw error;
+  }
+
+  const text = payload?.choices?.[0]?.message?.content;
+  if (typeof text !== "string" || !text.trim()) throw new Error(`${provider.name} 沒有回傳內容`);
+  return text;
 }
 
 function fallbackEstimate(message: string) {
@@ -75,7 +93,7 @@ function fallbackEstimate(message: string) {
       protein: 10,
       carbs: 55,
       fat: 12,
-      description: "Gemini 配額暫時用完，先以一般便利商店飯糰一個估算；實際口味與大小可能不同。"
+      description: "AI 暫時無法連線，先以一般便利商店飯糰一個估算；實際口味與大小可能不同。"
     };
   }
   if (/雞胸.*便當|便當.*雞胸|鸡胸.*便当|便当.*鸡胸/.test(text)) {
@@ -85,7 +103,7 @@ function fallbackEstimate(message: string) {
       protein: 40,
       carbs: 75,
       fat: 18,
-      description: "Gemini 配額暫時用完，先以雞胸肉、白飯、兩樣配菜的一般便當估算。"
+      description: "AI 暫時無法連線，先以雞胸肉、白飯、兩樣配菜的一般便當估算。"
     };
   }
   if (/便當|便当/.test(text)) {
@@ -95,7 +113,7 @@ function fallbackEstimate(message: string) {
       protein: 30,
       carbs: 85,
       fat: 24,
-      description: "Gemini 配額暫時用完，先以一份台式便當的常見份量估算。"
+      description: "AI 暫時無法連線，先以一份台式便當的常見份量估算。"
     };
   }
   return null;
@@ -108,13 +126,25 @@ export default async function handler(req: any, res: any) {
   }
 
   const ip = getClientIp(req);
-  if (!allowRequest(ip)) {
-    return res.status(429).json({ error: "查詢次數太頻繁，請稍後再試" });
-  }
+  if (!allowRequest(ip)) return res.status(429).json({ error: "查詢次數太頻繁，請稍後再試" });
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: "伺服器尚未設定 GEMINI_API_KEY" });
+    const providers: Provider[] = [
+      {
+        name: "NVIDIA DeepSeek",
+        model: process.env.NVIDIA_DEEPSEEK_MODEL || "deepseek-ai/deepseek-v4-flash",
+        apiKey: process.env.NVIDIA_DEEPSEEK_API_KEY
+      },
+      {
+        name: "NVIDIA Llama",
+        model: process.env.NVIDIA_MODEL || "meta/llama-3.3-70b-instruct",
+        apiKey: process.env.NVIDIA_API_KEY
+      }
+    ].filter((provider) => provider.apiKey);
+
+    if (!providers.length) {
+      return res.status(500).json({ error: "伺服器尚未設定 NVIDIA_DEEPSEEK_API_KEY 或 NVIDIA_API_KEY" });
+    }
 
     const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
     const history: ChatMessage[] = Array.isArray(req.body?.history)
@@ -131,10 +161,10 @@ export default async function handler(req: any, res: any) {
       .map((item) => `${item.role === "user" ? "使用者" : "營養助理"}：${item.content}`)
       .join("\n");
 
-    const prompt = `你是台灣飲食熱量估算助理。請使用 Google Search 查找產品官網、便利商店、餐廳或可信營養資料，協助使用者把自然語言轉成一筆飲食紀錄。
+    const prompt = `你是台灣飲食熱量估算助理。請依你的營養知識，把使用者的自然語言轉成一筆飲食紀錄。
 
 規則：
-1. 使用繁體中文。品牌商品（例如 7-ELEVEN 商品）優先採官方或商品標示資料。
+1. 使用繁體中文。這個服務沒有即時網路搜尋能力，不要捏造網址或引用來源；品牌商品請明確標示為估算。
 2. 若餐點已足夠明確，直接估算。若份量、主食或配菜差異會明顯影響結果，只問一個最重要且簡短的問題。
 3. 對話已有兩次使用者訊息，或使用者表示「直接估」，就不要再追問，改用合理常見份量估算並列出假設。
 4. 熱量與營養素都代表這次實際吃下的總量；未知的三大營養素可依典型配方合理估算。
@@ -149,64 +179,48 @@ export default async function handler(req: any, res: any) {
 對話：
 ${conversation}`;
 
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: { headers: { "User-Agent": "shine-body-ai-vercel" } }
-    });
-    const models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
-    let response: any;
-    let usedModel = models[0];
+    let responseText = "";
+    let usedProvider: Provider | undefined;
     let lastError: any;
-    let quotaExceeded = false;
-
-    for (const model of models) {
+    for (const provider of providers) {
       try {
-        usedModel = model;
-        response = await ai.models.generateContent({
-          model,
-          contents: prompt,
-          config: { tools: [{ googleSearch: {} }] } as any
-        });
+        responseText = await callNvidia(provider, prompt);
+        usedProvider = provider;
         break;
       } catch (error) {
         lastError = error;
-        if (isQuotaError(error)) {
-          quotaExceeded = true;
-          break;
-        }
+        // A second NVIDIA key/model can be used as a fallback for quota or transient errors.
+        if (!isProviderLimitError(error) && error?.status !== 401 && error?.status !== 403) break;
       }
     }
 
-    if (!response?.text && quotaExceeded) {
+    if (!responseText) {
       const fallbackFood = fallbackEstimate(message);
-      if (fallbackFood) {
+      if (fallbackFood && isProviderLimitError(lastError)) {
         return res.status(200).json({
           status: "ready",
           food: fallbackFood,
           confidence: "low",
-          assumptions: ["Gemini API 配額暫時用完，使用內建常見份量估算"],
+          assumptions: ["NVIDIA API 暫時無法使用，採內建常見份量估算"],
           sources: [],
-          provider: "本機常見份量估算（Gemini 配額暫滿）",
-          warning: "目前無法使用網路搜尋，這筆數字是暫時估算；配額恢復後可重新搜尋。"
+          provider: "內建常見份量估算（NVIDIA API 暫時無法使用）",
+          warning: "目前無法連線 NVIDIA AI，這筆數字是暫時估算；稍後可重新搜尋。"
         });
       }
-      return res.status(429).json({
-        code: "GEMINI_QUOTA_EXCEEDED",
-        error: "Gemini API 配額已用完，暫時無法進行網路搜尋。請稍後再試，或先手動輸入熱量。"
-      });
+      if (lastError?.status === 401 || lastError?.status === 403) {
+        return res.status(502).json({ code: "NVIDIA_API_KEY_INVALID", error: "NVIDIA API Key 無效，請檢查 Vercel 的 NVIDIA API 設定" });
+      }
+      throw lastError || new Error("NVIDIA AI 沒有回傳內容");
     }
 
-    if (!response?.text) throw lastError || new Error("Gemini 沒有回傳內容");
-    const parsed = parseJson(response.text);
-    const sources = collectSources(response);
-
+    const parsed = parseJson(responseText);
     if (parsed.status === "clarify" && typeof parsed.question === "string") {
       return res.status(200).json({
         status: "clarify",
         question: parsed.question,
         summary: parsed.summary || "",
-        sources,
-        provider: `Gemini AI (${usedModel})`
+        sources: [],
+        provider: `${usedProvider?.name} (${usedProvider?.model})`
       });
     }
 
@@ -227,9 +241,9 @@ ${conversation}`;
       },
       confidence: parsed.confidence || "medium",
       assumptions: Array.isArray(parsed.assumptions) ? parsed.assumptions.slice(0, 5) : [],
-      sources,
-      provider: `Gemini AI + Google Search (${usedModel})`,
-      warning: ""
+      sources: [],
+      provider: `${usedProvider?.name} (${usedProvider?.model})`,
+      warning: "NVIDIA AI 依模型知識估算，未連接即時網路搜尋；請在新增前確認份量。"
     });
   } catch (error: any) {
     console.error("Text food analysis error:", error);
