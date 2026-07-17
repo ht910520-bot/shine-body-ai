@@ -57,6 +57,50 @@ function collectSources(response: any): Source[] {
   return [...found.values()].slice(0, 5);
 }
 
+function isQuotaError(error: any) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return error?.status === "RESOURCE_EXHAUSTED"
+    || error?.code === 429
+    || message.includes("quota")
+    || message.includes("resource_exhausted")
+    || message.includes("rate limit");
+}
+
+function fallbackEstimate(message: string) {
+  const text = message.toLowerCase();
+  if (/飯糰|饭团|御飯糰|御饭团/.test(text)) {
+    return {
+      name: message,
+      calories: 380,
+      protein: 10,
+      carbs: 55,
+      fat: 12,
+      description: "Gemini 配額暫時用完，先以一般便利商店飯糰一個估算；實際口味與大小可能不同。"
+    };
+  }
+  if (/雞胸.*便當|便當.*雞胸|鸡胸.*便当|便当.*鸡胸/.test(text)) {
+    return {
+      name: message,
+      calories: 650,
+      protein: 40,
+      carbs: 75,
+      fat: 18,
+      description: "Gemini 配額暫時用完，先以雞胸肉、白飯、兩樣配菜的一般便當估算。"
+    };
+  }
+  if (/便當|便当/.test(text)) {
+    return {
+      name: message,
+      calories: 700,
+      protein: 30,
+      carbs: 85,
+      fat: 24,
+      description: "Gemini 配額暫時用完，先以一份台式便當的常見份量估算。"
+    };
+  }
+  return null;
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -113,6 +157,7 @@ ${conversation}`;
     let response: any;
     let usedModel = models[0];
     let lastError: any;
+    let quotaExceeded = false;
 
     for (const model of models) {
       try {
@@ -125,7 +170,30 @@ ${conversation}`;
         break;
       } catch (error) {
         lastError = error;
+        if (isQuotaError(error)) {
+          quotaExceeded = true;
+          break;
+        }
       }
+    }
+
+    if (!response?.text && quotaExceeded) {
+      const fallbackFood = fallbackEstimate(message);
+      if (fallbackFood) {
+        return res.status(200).json({
+          status: "ready",
+          food: fallbackFood,
+          confidence: "low",
+          assumptions: ["Gemini API 配額暫時用完，使用內建常見份量估算"],
+          sources: [],
+          provider: "本機常見份量估算（Gemini 配額暫滿）",
+          warning: "目前無法使用網路搜尋，這筆數字是暫時估算；配額恢復後可重新搜尋。"
+        });
+      }
+      return res.status(429).json({
+        code: "GEMINI_QUOTA_EXCEEDED",
+        error: "Gemini API 配額已用完，暫時無法進行網路搜尋。請稍後再試，或先手動輸入熱量。"
+      });
     }
 
     if (!response?.text) throw lastError || new Error("Gemini 沒有回傳內容");
@@ -160,7 +228,8 @@ ${conversation}`;
       confidence: parsed.confidence || "medium",
       assumptions: Array.isArray(parsed.assumptions) ? parsed.assumptions.slice(0, 5) : [],
       sources,
-      provider: `Gemini AI + Google Search (${usedModel})`
+      provider: `Gemini AI + Google Search (${usedModel})`,
+      warning: ""
     });
   } catch (error: any) {
     console.error("Text food analysis error:", error);
