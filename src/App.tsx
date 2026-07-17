@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from "react";
 
 // LocalStorage and DB keys matching original safe version
@@ -35,6 +36,16 @@ interface FoodItem {
   servings: number;
   portionAdjusted: boolean;
   totalCalories?: number;
+}
+
+interface FoodChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+interface FoodSearchSource {
+  title: string;
+  url: string;
 }
 
 interface ExerciseItem {
@@ -152,6 +163,10 @@ export default function App() {
   const [aiStatus, setAiStatus] = useState("每位朋友的紀錄只保存在自己的瀏覽器；AI 結果僅為估算。");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [lastAiFood, setLastAiFood] = useState<any>(null);
+  const [foodPrompt, setFoodPrompt] = useState("");
+  const [foodConversation, setFoodConversation] = useState<FoodChatMessage[]>([]);
+  const [foodSearchSources, setFoodSearchSources] = useState<FoodSearchSource[]>([]);
+  const [isSearchingFood, setIsSearchingFood] = useState(false);
 
   // Exercise Form inputs
   const [exerciseName, setExerciseName] = useState("快走");
@@ -400,7 +415,7 @@ export default function App() {
     setFoodCarbs(String(divide(aiFood.carbs)));
     setFoodFat(String(divide(aiFood.fat)));
     
-    setAiStatus(`Gemini AI 分析完成：整份共 ${Math.round(Number(aiFood.calories) || 0)} kcal${people > 1 ? `，除以 ${people} 人後每人約 ${Math.round(divide(aiFood.calories))} kcal` : '，目前未分食'}。${aiFood.description || '請確認數字後再新增。'}`);
+    setAiStatus(`AI 分析完成：整份共 ${Math.round(Number(aiFood.calories) || 0)} kcal${people > 1 ? `，除以 ${people} 人後每人約 ${Math.round(divide(aiFood.calories))} kcal` : '，目前未分食'}。${aiFood.description || '請確認數字後再新增。'}`);
   };
 
   useEffect(() => {
@@ -455,6 +470,52 @@ export default function App() {
     }
   };
 
+  const handleFoodTextSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const message = foodPrompt.trim();
+    if (!message || isSearchingFood) return;
+
+    const nextConversation: FoodChatMessage[] = [
+      ...foodConversation,
+      { role: 'user', content: message }
+    ];
+    setFoodConversation(nextConversation);
+    setFoodPrompt("");
+    setIsSearchingFood(true);
+    setAiStatus("正在搜尋相關商品與營養資料…");
+
+    try {
+      const response = await fetch("/api/analyze-food-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, history: foodConversation })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
+
+      setFoodSearchSources(Array.isArray(result.sources) ? result.sources : []);
+      if (result.status === 'clarify') {
+        const question = result.question || "可以再說明份量嗎？";
+        setFoodConversation([...nextConversation, { role: 'assistant', content: question }]);
+        setAiStatus("需要你補充一點資訊；也可以回答「直接估」讓我用常見份量估算。");
+        return;
+      }
+
+      if (!result.food) throw new Error("沒有取得可用的估算結果");
+      setLastAiFood(result.food);
+      recalculateAiPortion(result.food, shareCount);
+      const confidenceLabel = result.confidence === 'high' ? '高' : result.confidence === 'low' ? '低' : '中';
+      const answer = `${result.food.name}：約 ${result.food.calories} kcal。${result.food.description || ''}`;
+      setFoodConversation([...nextConversation, { role: 'assistant', content: answer }]);
+      setAiStatus(`${result.warning ? `${result.warning} ` : ''}估算完成（可信度：${confidenceLabel}）。數字已帶入下方，請確認後按「新增飲食」。`);
+    } catch (error: any) {
+      setFoodConversation([...nextConversation, { role: 'assistant', content: `目前無法完成搜尋：${error.message || error}` }]);
+      setAiStatus("搜尋失敗，可再試一次或直接手動輸入。");
+    } finally {
+      setIsSearchingFood(false);
+    }
+  };
+
   // Add food submit
   const handleFoodSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -488,6 +549,9 @@ export default function App() {
     setShareCount(1);
     setSelectedPhoto(null);
     setLastAiFood(null);
+    setFoodPrompt("");
+    setFoodConversation([]);
+    setFoodSearchSources([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
     setAiStatus("飲食紀錄已新增，可繼續選擇下一張照片。");
   };
@@ -926,6 +990,43 @@ export default function App() {
           {/* Add Food Card */}
           <section className="card">
             <h2>🍱 新增飲食</h2>
+            <div className="ai-box food-text-box">
+              <b>🧠 NVIDIA AI 估算熱量</b>
+              <p className="ai-hint">輸入品牌商品或一般餐點；NVIDIA AI 會在資料不足時先問你一個問題。</p>
+              <form onSubmit={handleFoodTextSubmit}>
+                <div className="food-prompt-row">
+                  <textarea
+                    aria-label="描述你吃了什麼"
+                    rows={2}
+                    maxLength={500}
+                    placeholder="例如：我吃了 7-11 阜杭豆漿飯糰／雞胸肉便當"
+                    value={foodPrompt}
+                    onChange={(e) => setFoodPrompt(e.target.value)}
+                  />
+                  <button className="pink" type="submit" disabled={!foodPrompt.trim() || isSearchingFood}>
+                    {isSearchingFood ? "分析中…" : foodConversation.length ? "送出回答" : "AI 估算"}
+                  </button>
+                </div>
+              </form>
+              {foodConversation.length > 0 && (
+                <div className="food-chat" aria-live="polite">
+                  {foodConversation.map((message, index) => (
+                    <div key={`${message.role}-${index}`} className={`food-chat-message ${message.role}`}>
+                      <span>{message.role === 'user' ? '你' : 'AI'}</span>
+                      <p>{message.content}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {foodSearchSources.length > 0 && (
+                <div className="food-sources">
+                  <span>參考資料：</span>
+                  {foodSearchSources.map((source) => (
+                    <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.title}</a>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="ai-box">
               <b>✨ AI 照片分析</b>
               <div className="fields" style={{ marginTop: "9px" }}>
@@ -1285,3 +1386,4 @@ export default function App() {
     </>
   );
 }
+
