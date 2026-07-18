@@ -400,6 +400,25 @@ button:disabled {
   fill: #244b63;
 }
 
+.weight-goal-line {
+  stroke: #f97316;
+  stroke-width: 3;
+  stroke-dasharray: 12 8;
+  opacity: .9;
+}
+
+.weight-goal-label-bg {
+  fill: #fff7ed;
+  stroke: #f97316;
+  stroke-width: 1;
+}
+
+.weight-goal-label {
+  fill: #c2410c;
+  font-size: 15px;
+  font-weight: 800;
+}
+
 .weight-entry {
   margin-top: 16px;
   padding: 14px;

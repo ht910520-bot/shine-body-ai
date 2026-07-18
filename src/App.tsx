@@ -17,6 +17,7 @@ interface Profile {
   activity: number;
   goal: number;
   waterTarget: number;
+  targetWeight: number;
   bmr: number;
   tdee: number;
   target: number;
@@ -125,6 +126,7 @@ const defaults: AppData = {
     activity: 1.375,
     goal: -400,
     waterTarget: 2000,
+    targetWeight: 60,
     bmr: 0,
     tdee: 0,
     target: 1400
@@ -134,6 +136,19 @@ const defaults: AppData = {
   exercises: [],
   weightHistory: INITIAL_WEIGHT_HISTORY.map((point) => ({ ...point }))
 };
+
+const normalizeTargetWeight = (value: any) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 25 && parsed <= 300
+    ? Math.round(parsed * 10) / 10
+    : defaults.profile.targetWeight;
+};
+
+const normalizeProfile = (value: any): Profile => ({
+  ...defaults.profile,
+  ...(value || {}),
+  targetWeight: normalizeTargetWeight(value?.targetWeight)
+});
 
 // METS configuration for exercises
 const METS: Record<string, number> = {
@@ -149,7 +164,7 @@ export default function App() {
       const stored = localStorage.getItem(KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        const merged = { ...defaults, ...parsed };
+        const merged = { ...defaults, ...parsed, profile: normalizeProfile(parsed.profile) };
         merged.weightHistory = normalizeWeightHistory(parsed.weightHistory);
         // Check date change
         if (merged.date !== today()) {
@@ -182,6 +197,7 @@ export default function App() {
   const [profileActivity, setProfileActivity] = useState<number>(data.profile.activity);
   const [profileGoal, setProfileGoal] = useState<number>(data.profile.goal);
   const [profileWaterTarget, setProfileWaterTarget] = useState<number>(data.profile.waterTarget);
+  const [profileTargetWeight, setProfileTargetWeight] = useState<number>(data.profile.targetWeight);
 
   // Irregular weight measurements for the trend chart
   const [weightDate, setWeightDate] = useState(today());
@@ -323,6 +339,7 @@ export default function App() {
     activity: profileActivity,
     goal: profileGoal,
     waterTarget: profileWaterTarget,
+    targetWeight: profileTargetWeight,
     bmr: data.profile.bmr,
     tdee: data.profile.tdee,
     target: data.profile.target
@@ -376,6 +393,7 @@ export default function App() {
         activity: profileActivity,
         goal: profileGoal,
         waterTarget: profileWaterTarget,
+        targetWeight: normalizeTargetWeight(profileTargetWeight),
         bmr: currentProfile.bmr,
         tdee: currentProfile.tdee,
         target: currentProfile.target
@@ -778,6 +796,7 @@ export default function App() {
       if (window.confirm(`載入「${record.name}」為目前資料？目前尚未另存的內容會被取代。`)) {
         const restored = structuredClone(record.snapshot);
         restored.date = today();
+        restored.profile = normalizeProfile(restored.profile);
         restored.weightHistory = normalizeWeightHistory(restored.weightHistory);
         setData(restored);
         
@@ -789,6 +808,7 @@ export default function App() {
         setProfileActivity(restored.profile.activity);
         setProfileGoal(restored.profile.goal);
         setProfileWaterTarget(restored.profile.waterTarget);
+        setProfileTargetWeight(restored.profile.targetWeight);
 
         localStorage.setItem(KEY, JSON.stringify(restored));
         loadHistoryRecords(db);
@@ -829,6 +849,7 @@ export default function App() {
       if (!restored.profile || !Array.isArray(restored.foods) || !Array.isArray(restored.exercises)) {
         throw new Error("Invalid format");
       }
+      restored.profile = normalizeProfile(restored.profile);
       restored.weightHistory = normalizeWeightHistory(restored.weightHistory);
       setData(restored);
 
@@ -840,6 +861,7 @@ export default function App() {
       setProfileActivity(restored.profile.activity);
       setProfileGoal(restored.profile.goal);
       setProfileWaterTarget(restored.profile.waterTarget);
+      setProfileTargetWeight(restored.profile.targetWeight);
 
       localStorage.setItem(KEY, JSON.stringify(restored));
       setCookieStatus('已載入 Cookie／本機替代資料。');
@@ -883,6 +905,7 @@ export default function App() {
       if (!d.profile || !Array.isArray(d.foods) || !Array.isArray(d.exercises)) {
         throw new Error("格式錯誤");
       }
+      d.profile = normalizeProfile(d.profile);
       d.weightHistory = normalizeWeightHistory(d.weightHistory);
       if (Array.isArray(raw.records) && db) {
         for (const record of raw.records) {
@@ -898,6 +921,7 @@ export default function App() {
       setProfileActivity(d.profile.activity);
       setProfileGoal(d.profile.goal);
       setProfileWaterTarget(d.profile.waterTarget);
+      setProfileTargetWeight(d.profile.targetWeight);
 
       localStorage.setItem(KEY, JSON.stringify(d));
       if (db) {
@@ -927,6 +951,7 @@ export default function App() {
       setProfileActivity(reset.profile.activity);
       setProfileGoal(reset.profile.goal);
       setProfileWaterTarget(reset.profile.waterTarget);
+      setProfileTargetWeight(reset.profile.targetWeight);
 
       localStorage.removeItem(KEY);
       localStorage.setItem(KEY, JSON.stringify(reset));
@@ -945,6 +970,7 @@ export default function App() {
 
   const weightHistory = sortWeightHistory(normalizeWeightHistory(data.weightHistory));
   const weightValues = weightHistory.map((point) => point.weight);
+  const goalWeight = normalizeTargetWeight(profileTargetWeight);
   const weightChart = {
     width: 1420,
     height: 540,
@@ -952,13 +978,14 @@ export default function App() {
     right: 30,
     top: 54,
     bottom: 126,
-    min: Math.min(59, Math.floor(Math.min(...weightValues))),
-    max: Math.max(68, Math.ceil(Math.max(...weightValues)))
+    min: Math.min(59, Math.floor(Math.min(...weightValues, goalWeight))),
+    max: Math.max(68, Math.ceil(Math.max(...weightValues, goalWeight)))
   };
   const weightPlotWidth = weightChart.width - weightChart.left - weightChart.right;
   const weightPlotHeight = weightChart.height - weightChart.top - weightChart.bottom;
   const weightPoints = weightHistory.map((point, index) => ({
     ...point,
+    changeFromPrevious: index === 0 ? null : Math.round((point.weight - weightHistory[index - 1].weight) * 10) / 10,
     x: weightChart.left + (index / Math.max(1, weightHistory.length - 1)) * weightPlotWidth,
     y: weightChart.top + ((weightChart.max - point.weight) / (weightChart.max - weightChart.min)) * weightPlotHeight
   }));
@@ -970,7 +997,9 @@ export default function App() {
   );
   const lowestWeight = Math.min(...weightHistory.map((point) => point.weight));
   const latestWeight = weightHistory[weightHistory.length - 1].weight;
-  const weightChange = Math.round((latestWeight - weightHistory[0].weight) * 10) / 10;
+  const previousWeight = weightHistory.length > 1 ? weightHistory[weightHistory.length - 2].weight : latestWeight;
+  const weightChange = Math.round((latestWeight - previousWeight) * 10) / 10;
+  const goalY = weightChart.top + ((weightChart.max - goalWeight) / (weightChart.max - weightChart.min)) * weightPlotHeight;
 
   return (
     <>
@@ -1111,6 +1140,19 @@ export default function App() {
                     onChange={(e) => setProfileWaterTarget(Number(e.target.value))}
                   />
                 </label>
+                <label>
+                  目標體重 kg
+                  <input
+                    id="targetWeight"
+                    type="number"
+                    min="25"
+                    max="300"
+                    step="0.1"
+                    required
+                    value={profileTargetWeight}
+                    onChange={(e) => setProfileTargetWeight(Number(e.target.value))}
+                  />
+                </label>
               </div>
               <div className="actions">
                 <button type="submit">儲存並計算</button>
@@ -1126,12 +1168,13 @@ export default function App() {
             <div className="weight-heading">
               <div>
                 <h2>❄️ 珊珊體重趨勢</h2>
-                <p>已嵌入你提供的 2025–2026 測量紀錄</p>
+                <p>已嵌入你提供的 2025–2026 測量紀錄；橙色虛線是目標體重，可在上方設定後即時更新</p>
               </div>
               <div className="weight-summary">
                 <span><b>{latestWeight.toFixed(1)}</b> kg<br /><small>最新</small></span>
                 <span><b>{lowestWeight.toFixed(1)}</b> kg<br /><small>最低點</small></span>
-                <span><b>{weightChange > 0 ? '+' : ''}{weightChange.toFixed(1)}</b> kg<br /><small>相比第一筆</small></span>
+                <span><b>{weightChange > 0 ? '+' : ''}{weightChange.toFixed(1)}</b> kg<br /><small>相比前一筆</small></span>
+                <span><b>{goalWeight.toFixed(1)}</b> kg<br /><small>目標體重</small></span>
               </div>
             </div>
             <div className="weight-chart-shell">
@@ -1175,6 +1218,28 @@ export default function App() {
                   );
                 })}
 
+                <line
+                  x1={weightChart.left}
+                  x2={weightChart.width - weightChart.right}
+                  y1={goalY}
+                  y2={goalY}
+                  className="weight-goal-line"
+                />
+                <rect
+                  x={weightChart.width - weightChart.right - 160}
+                  y={goalY - 25}
+                  width="150"
+                  height="22"
+                  rx="11"
+                  className="weight-goal-label-bg"
+                />
+                <text
+                  x={weightChart.width - weightChart.right - 85}
+                  y={goalY - 10}
+                  textAnchor="middle"
+                  className="weight-goal-label"
+                >目標 {goalWeight.toFixed(1)} kg</text>
+
                 <text x="28" y={weightChart.top + weightPlotHeight / 2} textAnchor="middle" className="weight-axis-title" transform={`rotate(-90 28 ${weightChart.top + weightPlotHeight / 2})`}>體重（kg）</text>
                 <line x1={weightChart.left} x2={weightChart.left} y1={weightChart.top} y2={weightChart.height - weightChart.bottom} className="weight-axis" />
                 <line x1={weightChart.left} x2={weightChart.width - weightChart.right} y1={weightChart.height - weightChart.bottom} y2={weightChart.height - weightChart.bottom} className="weight-axis" />
@@ -1185,7 +1250,17 @@ export default function App() {
 
                 {weightPoints.map((point, index) => (
                   <g key={point.date} filter="url(#weightShadow)">
-                    <image href="/assets/sansan-bear-icon.svg?v=2" x={point.x - 18} y={point.y - 18} width="36" height="36" preserveAspectRatio="xMidYMid slice" aria-label={`${point.date} ${point.weight} kg`} />
+                    <image
+                      href="/assets/sansan-bear-icon.svg?v=2"
+                      x={point.x - 18}
+                      y={point.y - 18}
+                      width="36"
+                      height="36"
+                      preserveAspectRatio="xMidYMid slice"
+                      aria-label={point.changeFromPrevious === null
+                        ? `${point.date} ${point.weight} kg`
+                        : `${point.date} ${point.weight} kg，與前一筆${point.changeFromPrevious > 0 ? '+' : ''}${point.changeFromPrevious.toFixed(1)} kg`}
+                    />
                     <text x={point.x} y={point.y - 23} textAnchor="middle" className="weight-value-label">{point.weight.toFixed(1)}</text>
                     <text x={point.x} y={weightChart.height - weightChart.bottom + 30} textAnchor="middle" className="weight-date-label" transform={`rotate(-42 ${point.x} ${weightChart.height - weightChart.bottom + 30})`}>{point.label}</text>
                     {index === 0 || weightHistory[index - 1].date.slice(0, 4) !== point.date.slice(0, 4) ? (
