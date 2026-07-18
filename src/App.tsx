@@ -976,7 +976,7 @@ export default function App() {
     <>
       <header>
         <div className="brand-heading">
-          <img className="bear-brand-icon" src="/assets/sansan-bear-icon.svg" alt="珊珊熊熊" />
+          <img className="bear-brand-icon" src="/assets/sansan-bear-icon.svg?v=2" alt="珊珊熊熊" />
           <div>
             <h1>✨ 閃耀體態</h1>
             <p>飲食卡路里管家・AI 智能升級版</p>
@@ -1185,7 +1185,7 @@ export default function App() {
 
                 {weightPoints.map((point, index) => (
                   <g key={point.date} filter="url(#weightShadow)">
-                    <image href="/assets/sansan-bear-icon.svg" x={point.x - 18} y={point.y - 18} width="36" height="36" preserveAspectRatio="xMidYMid slice" aria-label={`${point.date} ${point.weight} kg`} />
+                    <image href="/assets/sansan-bear-icon.svg?v=2" x={point.x - 18} y={point.y - 18} width="36" height="36" preserveAspectRatio="xMidYMid slice" aria-label={`${point.date} ${point.weight} kg`} />
                     <text x={point.x} y={point.y - 23} textAnchor="middle" className="weight-value-label">{point.weight.toFixed(1)}</text>
                     <text x={point.x} y={weightChart.height - weightChart.bottom + 30} textAnchor="middle" className="weight-date-label" transform={`rotate(-42 ${point.x} ${weightChart.height - weightChart.bottom + 30})`}>{point.label}</text>
                     {index === 0 || weightHistory[index - 1].date.slice(0, 4) !== point.date.slice(0, 4) ? (
@@ -1198,7 +1198,7 @@ export default function App() {
             </div>
             <form id="weightForm" className="weight-entry" onSubmit={handleWeightSubmit}>
               <div className="weight-entry-heading">
-                <img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg" alt="珊珊熊熊" />
+                <img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg?v=2" alt="珊珊熊熊" />
                 <div>
                   <b>{editingWeightDate ? "修改體重紀錄" : "不定時新增體重"}</b>
                   <div className="notice">不用每天輸入；有測量時填寫日期與體重，儲存後會立即更新趨勢圖。</div>
@@ -1263,7 +1263,7 @@ export default function App() {
           <section className="card">
             <h2>🍱 新增飲食</h2>
             <div className="ai-box" style={{ marginBottom: "12px" }}>
-              <div className="ai-heading"><img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg" alt="珊珊熊熊" /><b>💬 自然語言查詢熱量</b></div>
+              <div className="ai-heading"><img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg?v=2" alt="珊珊熊熊" /><b>💬 自然語言查詢熱量</b></div>
               <div className="notice" style={{ marginTop: "6px" }}>
                 直接輸入「711 阜杭豆漿飯糰」或「雞胸肉便當」；目前優先使用 NVIDIA API 估算，資訊不足時再向你確認。
               </div>
@@ -1303,7 +1303,7 @@ export default function App() {
               </div>
             </div>
             <div className="ai-box">
-              <div className="ai-heading"><img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg" alt="珊珊熊熊" /><b>✨ AI 影像辨識</b></div>
+              <div className="ai-heading"><img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg?v=2" alt="珊珊熊熊" /><b>✨ AI 影像辨識</b></div>
               <div className="fields" style={{ marginTop: "9px" }}>
                 <div className="notice">照片分析服務：NVIDIA Vision（主要），Gemini（備援）。API key 只在伺服器端維護。</div>
                 <label>
