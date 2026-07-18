@@ -1646,7 +1646,7 @@ export default function App() {
             </div>
             <div id="cookieStatus" className="status">{cookieStatus}</div>
             <div className="notice">
-              Cookie 只保存目前資料，不包含完整歷史；若本機檔案不支援 Cookie 或容量超過限制，會自動改用本機替代儲存。換瀏覽器前仍建議匯出完整 JSON。
+              Cookie 會保存目前資料與體重趨勢紀錄，但不包含本機歷史快照；若本機檔案不支援 Cookie 或容量超過限制，會自動改用本機替代儲存。換瀏覽器前仍建議匯出完整 JSON。
             </div>
           </section>
         </div>
