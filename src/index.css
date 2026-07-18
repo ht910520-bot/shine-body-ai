@@ -37,6 +37,22 @@ header p {
   margin: 7px 0;
 }
 
+.brand-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.bear-brand-icon {
+  width: 58px;
+  height: 58px;
+  flex: none;
+  object-fit: cover;
+  border-radius: 18px;
+  background: #b8e4f7;
+  box-shadow: 0 5px 14px #79bad533;
+}
+
 .tag {
   color: var(--pink);
   font-size: 13px;
@@ -116,6 +132,17 @@ input, select {
   border: 1px solid #ded5da;
   border-radius: 11px;
   background: white;
+}
+
+textarea {
+  width: 100%;
+  margin-top: 5px;
+  padding: 10px 11px;
+  border: 1px solid #ded5da;
+  border-radius: 11px;
+  background: white;
+  font: inherit;
+  resize: vertical;
 }
 
 button {
@@ -259,11 +286,244 @@ button:disabled {
   margin-top: 10px;
 }
 
+.ai-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.bear-ai-icon {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  object-fit: cover;
+  border-radius: 11px;
+  background: #b8e4f7;
+}
+
+.ai-box .bear-ai-icon,
+.ai-heading .bear-ai-icon {
+  display: block;
+  max-width: none;
+  max-height: none;
+  margin-top: 0;
+}
+
+.weight-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.weight-summary {
+  display: flex;
+  gap: 16px;
+  text-align: right;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.weight-summary span {
+  display: grid;
+  gap: 2px;
+}
+
+.weight-summary b {
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.weight-chart-shell {
+  overflow-x: auto;
+  border-radius: 24px;
+}
+
+.weight-chart {
+  display: block;
+  width: 100%;
+  min-width: 720px;
+  height: auto;
+}
+
+.weight-chart-title {
+  font-size: 28px;
+  font-weight: 800;
+  fill: #1f4155;
+}
+
+.weight-snowflake {
+  fill: #fff;
+  font-size: 30px;
+}
+
+.weight-gridline {
+  stroke: #8bc6df;
+  stroke-opacity: .35;
+  stroke-width: 1;
+}
+
+.weight-axis {
+  stroke: #1f4155;
+  stroke-width: 3;
+}
+
+.weight-axis-label,
+.weight-date-label,
+.weight-year-label,
+.weight-axis-title {
+  fill: #1f4155;
+  font-weight: 700;
+}
+
+.weight-axis-label {
+  font-size: 16px;
+}
+
+.weight-date-label {
+  font-size: 14px;
+}
+
+.weight-year-label {
+  font-size: 17px;
+}
+
+.weight-axis-title {
+  font-size: 18px;
+}
+
+.weight-value-label {
+  font-size: 17px;
+  font-weight: 800;
+  fill: #244b63;
+}
+
+.weight-entry {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #d7edf7;
+  border-radius: 16px;
+  background: #f7fcff;
+}
+
+.weight-entry-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.weight-entry-heading .notice {
+  margin-top: 4px;
+}
+
+.weight-records {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.weight-records summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: #475569;
+}
+
+.weight-record-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.weight-record {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.weight-record .actions {
+  margin-top: 0;
+}
+
 .status {
   font-size: 13px;
   color: #9d174d;
   margin-top: 9px;
   min-height: 18px;
+}
+
+.ai-hint {
+  margin: 6px 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.food-prompt-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: stretch;
+}
+
+.food-prompt-row textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+}
+
+.food-chat {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.food-chat-message {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+}
+
+.food-chat-message span {
+  font-size: 11px;
+  font-weight: 800;
+  color: #9d174d;
+  padding-top: 7px;
+}
+
+.food-chat-message p {
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.food-chat-message.user p {
+  background: #fce7f3;
+}
+
+.food-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.food-sources a {
+  color: #9d174d;
+  text-decoration: underline;
 }
 
 @media (max-width: 720px) {
@@ -276,4 +536,17 @@ button:disabled {
   .fields, .record-tools {
     grid-template-columns: 1fr;
   }
+  .food-prompt-row {
+    grid-template-columns: 1fr;
+  }
+  .weight-heading {
+    flex-direction: column;
+  }
+  .weight-summary {
+    text-align: left;
+  }
+  .weight-record {
+    align-items: flex-start;
+  }
 }
+

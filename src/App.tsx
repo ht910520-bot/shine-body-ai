@@ -4,8 +4,6 @@ import React, { useState, useEffect, useRef } from "react";
 const KEY = 'shine_body_standalone_v1';
 const COOKIE_NAME = 'shine_body_current';
 const COOKIE_FALLBACK_KEY = 'shine_body_cookie_fallback';
-const AI_PROVIDER_STORE = 'shine_body_ai_provider';
-const AI_PROVIDER_MIGRATION = 'shine_body_ai_provider_v2';
 const DB_NAME = 'shine_body_history_v1';
 const STORE = 'records';
 
@@ -50,6 +48,7 @@ interface AppData {
   water: number;
   foods: FoodItem[];
   exercises: ExerciseItem[];
+  weightHistory: WeightHistoryPoint[];
 }
 
 interface SnapshotRecord {
@@ -59,6 +58,62 @@ interface SnapshotRecord {
   createdAt: string;
   snapshot: AppData;
 }
+
+interface WeightHistoryPoint {
+  date: string;
+  label: string;
+  weight: number;
+}
+
+// User-provided historical measurements. Keep the original values so the
+// chart remains a faithful record even when the current profile is edited.
+const INITIAL_WEIGHT_HISTORY: WeightHistoryPoint[] = [
+  { date: '2025-08-03', label: '8/3', weight: 64.0 },
+  { date: '2025-08-28', label: '8/28', weight: 62.6 },
+  { date: '2025-08-31', label: '8/31', weight: 62.2 },
+  { date: '2025-09-14', label: '9/14', weight: 62.4 },
+  { date: '2025-10-10', label: '10/10', weight: 61.5 },
+  { date: '2025-10-29', label: '10/29', weight: 60.9 },
+  { date: '2025-12-15', label: '12/15', weight: 59.7 },
+  { date: '2026-01-12', label: '1/12', weight: 60.8 },
+  { date: '2026-02-04', label: '2/4', weight: 60.9 },
+  { date: '2026-02-11', label: '2/11', weight: 61.9 },
+  { date: '2026-02-16', label: '2/16', weight: 64.3 },
+  { date: '2026-02-21', label: '2/21', weight: 65.1 },
+  { date: '2026-03-19', label: '3/19', weight: 65.7 },
+  { date: '2026-04-11', label: '4/11', weight: 66.4 },
+  { date: '2026-04-14', label: '4/14', weight: 63.7 },
+  { date: '2026-05-05', label: '5/5', weight: 64.6 },
+  { date: '2026-05-11', label: '5/11', weight: 64.1 },
+  { date: '2026-05-15', label: '5/15', weight: 63.5 },
+  { date: '2026-05-29', label: '5/29', weight: 62.7 },
+  { date: '2026-06-15', label: '6/15', weight: 64.7 },
+  { date: '2026-06-23', label: '6/23', weight: 65.3 },
+  { date: '2026-06-29', label: '6/29', weight: 63.8 },
+  { date: '2026-07-09', label: '7/9', weight: 66.5 },
+  { date: '2026-07-10', label: '7/10', weight: 66.8 },
+  { date: '2026-07-12', label: '7/12', weight: 65.7 },
+  { date: '2026-07-17', label: '7/17', weight: 64.2 }
+];
+
+const formatWeightLabel = (date: string) => {
+  const parsed = new Date(`${date}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? date : `${parsed.getMonth() + 1}/${parsed.getDate()}`;
+};
+
+const sortWeightHistory = (points: WeightHistoryPoint[]) => [...points].sort((a, b) => a.date.localeCompare(b.date));
+
+const normalizeWeightHistory = (value: any): WeightHistoryPoint[] => {
+  if (!Array.isArray(value)) return INITIAL_WEIGHT_HISTORY.map((point) => ({ ...point }));
+  const normalized = value
+    .filter((point: any) => point && typeof point.date === 'string' && Number.isFinite(Number(point.weight)))
+    .map((point: any) => ({
+      date: point.date,
+      label: point.label || formatWeightLabel(point.date),
+      weight: Math.round(Number(point.weight) * 10) / 10
+    }));
+  return normalized.length > 0 ? sortWeightHistory(normalized) : INITIAL_WEIGHT_HISTORY.map((point) => ({ ...point }));
+};
 
 const defaults: AppData = {
   date: today(),
@@ -76,7 +131,8 @@ const defaults: AppData = {
   },
   water: 0,
   foods: [],
-  exercises: []
+  exercises: [],
+  weightHistory: INITIAL_WEIGHT_HISTORY.map((point) => ({ ...point }))
 };
 
 // METS configuration for exercises
@@ -94,6 +150,7 @@ export default function App() {
       if (stored) {
         const parsed = JSON.parse(stored);
         const merged = { ...defaults, ...parsed };
+        merged.weightHistory = normalizeWeightHistory(parsed.weightHistory);
         // Check date change
         if (merged.date !== today()) {
           merged.date = today();
@@ -126,6 +183,11 @@ export default function App() {
   const [profileGoal, setProfileGoal] = useState<number>(data.profile.goal);
   const [profileWaterTarget, setProfileWaterTarget] = useState<number>(data.profile.waterTarget);
 
+  // Irregular weight measurements for the trend chart
+  const [weightDate, setWeightDate] = useState(today());
+  const [weightValue, setWeightValue] = useState("");
+  const [editingWeightDate, setEditingWeightDate] = useState<string | null>(null);
+
   // Water records
   const [waterAmount, setWaterAmount] = useState<number>(250);
 
@@ -138,20 +200,17 @@ export default function App() {
   const [foodMeal, setFoodMeal] = useState("早餐");
 
   // AI Food Photo Analysis
-  const [aiProvider, setAiProvider] = useState(() => {
-    const providerMigrated = localStorage.getItem(AI_PROVIDER_MIGRATION);
-    if (providerMigrated) {
-      return localStorage.getItem(AI_PROVIDER_STORE) || 'gemini';
-    }
-    localStorage.setItem(AI_PROVIDER_STORE, 'gemini');
-    localStorage.setItem(AI_PROVIDER_MIGRATION, '1');
-    return 'gemini';
-  });
   const [shareCount, setShareCount] = useState<number>(1);
   const [selectedPhoto, setSelectedPhoto] = useState<{ dataUrl: string; base64: string; mimeType: string } | null>(null);
   const [aiStatus, setAiStatus] = useState("每位朋友的紀錄只保存在自己的瀏覽器；AI 結果僅為估算。");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [lastAiFood, setLastAiFood] = useState<any>(null);
+  const [foodText, setFoodText] = useState("");
+  const [foodFollowUpAnswer, setFoodFollowUpAnswer] = useState("");
+  const [foodTextDraft, setFoodTextDraft] = useState<any>(null);
+  const [textNeedsConfirmation, setTextNeedsConfirmation] = useState(false);
+  const [isAnalyzingText, setIsAnalyzingText] = useState(false);
+  const [aiSources, setAiSources] = useState<Array<{ title: string; url: string }>>([]);
 
   // Exercise Form inputs
   const [exerciseName, setExerciseName] = useState("快走");
@@ -325,6 +384,52 @@ export default function App() {
     updateDataAndSave(updated);
   };
 
+  const resetWeightEditor = () => {
+    setWeightDate(today());
+    setWeightValue("");
+    setEditingWeightDate(null);
+  };
+
+  const handleWeightSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsedWeight = Number(weightValue);
+    if (!weightDate || !Number.isFinite(parsedWeight) || parsedWeight < 25 || parsedWeight > 300) {
+      alert("請輸入 25～300 kg 的有效體重與日期。");
+      return;
+    }
+
+    const nextPoint: WeightHistoryPoint = {
+      date: weightDate,
+      label: formatWeightLabel(weightDate),
+      weight: Math.round(parsedWeight * 10) / 10
+    };
+    const nextHistory = sortWeightHistory([
+      ...(data.weightHistory || []).filter((point) => point.date !== editingWeightDate && point.date !== weightDate),
+      nextPoint
+    ]);
+    updateDataAndSave({ ...data, weightHistory: nextHistory });
+    resetWeightEditor();
+  };
+
+  const handleEditWeight = (point: WeightHistoryPoint) => {
+    setEditingWeightDate(point.date);
+    setWeightDate(point.date);
+    setWeightValue(String(point.weight));
+  };
+
+  const handleDeleteWeight = (date: string) => {
+    if ((data.weightHistory || []).length <= 1) {
+      alert("至少保留一筆體重紀錄，才能繪製趨勢圖。");
+      return;
+    }
+    if (!window.confirm(`確定刪除 ${date} 的體重紀錄？`)) return;
+    updateDataAndSave({
+      ...data,
+      weightHistory: (data.weightHistory || []).filter((point) => point.date !== date)
+    });
+    if (editingWeightDate === date) resetWeightEditor();
+  };
+
   // Add water
   const handleAddWater = () => {
     const updated = { ...data, water: data.water + waterAmount };
@@ -357,7 +462,20 @@ export default function App() {
           const ctx = canvas.getContext('2d');
           if (ctx) {
             ctx.drawImage(image, 0, 0, width, height);
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
+            // Qwen's inline image endpoint has a roughly 180 KB limit. Keep
+            // the browser payload below that limit so Qwen can remain the
+            // primary model instead of falling back for ordinary phone photos.
+            let quality = 0.78;
+            let dataUrl = canvas.toDataURL('image/jpeg', quality);
+            const inlineLimitBytes = 170_000;
+            const base64Bytes = (value: string) => {
+              const comma = value.indexOf(',');
+              return comma >= 0 ? Math.ceil((value.length - comma - 1) * 3 / 4) : 0;
+            };
+            while (base64Bytes(dataUrl) > inlineLimitBytes && quality > 0.38) {
+              quality = Math.max(0.38, quality - 0.08);
+              dataUrl = canvas.toDataURL('image/jpeg', quality);
+            }
             resolve({
               dataUrl,
               base64: dataUrl.split(',')[1],
@@ -390,7 +508,7 @@ export default function App() {
   };
 
   // Portion Recalculation
-  const recalculateAiPortion = (aiFood: any, people: number) => {
+  const recalculateAiPortion = (aiFood: any, people: number, statusMessage?: string) => {
     if (!aiFood) return;
     const divide = (value: any) => Math.round((Math.max(0, Number(value) || 0) / people) * 10) / 10;
     
@@ -400,7 +518,7 @@ export default function App() {
     setFoodCarbs(String(divide(aiFood.carbs)));
     setFoodFat(String(divide(aiFood.fat)));
     
-    setAiStatus(`Gemini AI 分析完成：整份共 ${Math.round(Number(aiFood.calories) || 0)} kcal${people > 1 ? `，除以 ${people} 人後每人約 ${Math.round(divide(aiFood.calories))} kcal` : '，目前未分食'}。${aiFood.description || '請確認數字後再新增。'}`);
+    setAiStatus(statusMessage || `Gemini AI 分析完成：整份共 ${Math.round(Number(aiFood.calories) || 0)} kcal${people > 1 ? `，除以 ${people} 人後每人約 ${Math.round(divide(aiFood.calories))} kcal` : '，目前未分食'}。${aiFood.description || '請確認數字後再新增。'}`);
   };
 
   useEffect(() => {
@@ -416,7 +534,7 @@ export default function App() {
     }
     
     setIsAnalyzing(true);
-    setAiStatus("Gemini 正在透過安全伺服器分析…");
+    setAiStatus("NVIDIA Vision 正在透過安全伺服器分析（失敗時才回退 Gemini）…");
 
     try {
       const response = await fetch("/api/analyze-food", {
@@ -427,7 +545,6 @@ export default function App() {
         body: JSON.stringify({
           image: selectedPhoto.base64,
           mimeType: selectedPhoto.mimeType,
-          provider: aiProvider,
         })
       });
 
@@ -445,7 +562,11 @@ export default function App() {
       }
 
       setLastAiFood(result.food);
-      recalculateAiPortion(result.food, shareCount);
+      recalculateAiPortion(
+        result.food,
+        shareCount,
+        `${result.provider || "AI"} 分析完成：整份共 ${Math.round(Number(result.food?.calories) || 0)} kcal${shareCount > 1 ? `，除以 ${shareCount} 人後每人約 ${Math.round((Number(result.food?.calories) || 0) / shareCount)} kcal` : "，目前未分食"}。${result.notes || result.food?.description || "請確認數字後再新增。"}`
+      );
 
     } catch (error: any) {
       console.error(error);
@@ -455,9 +576,67 @@ export default function App() {
     }
   };
 
+  const handleAnalyzeFoodText = async () => {
+    const query = foodText.trim();
+    if (!query) {
+      alert("請先輸入餐點名稱或描述");
+      return;
+    }
+    if (textNeedsConfirmation && !foodFollowUpAnswer.trim()) {
+      alert("請先回答上方的補充問題");
+      return;
+    }
+
+    setIsAnalyzingText(true);
+    setAiStatus("Gemini 正在搜尋餐點資料與營養標示…");
+    try {
+      const response = await fetch("/api/analyze-food-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: query,
+          followUpAnswer: foodFollowUpAnswer.trim() || undefined,
+          previous: foodTextDraft || undefined
+        })
+      });
+      const contentType = response.headers.get("content-type") || "";
+      const result: any = contentType.includes("application/json")
+        ? await response.json()
+        : { error: (await response.text()).slice(0, 180) };
+      if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
+
+      setAiSources(Array.isArray(result.sources) ? result.sources : []);
+      if (result.status === "needs_confirmation") {
+        setFoodTextDraft(result.food || null);
+        setTextNeedsConfirmation(true);
+        setAiStatus(`需要確認：${result.question || "請補充餐點份量或內容。"}${result.food?.calories ? `（目前暫估 ${Math.round(Number(result.food.calories))} kcal）` : ""}`);
+        return;
+      }
+
+      setLastAiFood(result.food);
+      setFoodTextDraft(null);
+      setTextNeedsConfirmation(false);
+      setFoodFollowUpAnswer("");
+      recalculateAiPortion(
+        result.food,
+        shareCount,
+        `自然語言查詢完成（${result.provider || "AI"}）：整份約 ${Math.round(Number(result.food?.calories) || 0)} kcal。${result.notes || result.food?.description || "請確認數字後再新增。"}`
+      );
+    } catch (error: any) {
+      console.error(error);
+      setAiStatus(`查詢失敗：${error.message || error}。可手動輸入熱量。`);
+    } finally {
+      setIsAnalyzingText(false);
+    }
+  };
+
   // Add food submit
   const handleFoodSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (textNeedsConfirmation) {
+      alert("請先回答自然語言分析的補充問題，再新增飲食。");
+      return;
+    }
     const servings = shareCount || 1;
     const newFood: FoodItem = {
       id: crypto.randomUUID(),
@@ -488,6 +667,11 @@ export default function App() {
     setShareCount(1);
     setSelectedPhoto(null);
     setLastAiFood(null);
+    setFoodText("");
+    setFoodFollowUpAnswer("");
+    setFoodTextDraft(null);
+    setTextNeedsConfirmation(false);
+    setAiSources([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
     setAiStatus("飲食紀錄已新增，可繼續選擇下一張照片。");
   };
@@ -594,6 +778,7 @@ export default function App() {
       if (window.confirm(`載入「${record.name}」為目前資料？目前尚未另存的內容會被取代。`)) {
         const restored = structuredClone(record.snapshot);
         restored.date = today();
+        restored.weightHistory = normalizeWeightHistory(restored.weightHistory);
         setData(restored);
         
         // Sync states of profile inputs
@@ -644,6 +829,7 @@ export default function App() {
       if (!restored.profile || !Array.isArray(restored.foods) || !Array.isArray(restored.exercises)) {
         throw new Error("Invalid format");
       }
+      restored.weightHistory = normalizeWeightHistory(restored.weightHistory);
       setData(restored);
 
       // Sync form fields
@@ -697,6 +883,7 @@ export default function App() {
       if (!d.profile || !Array.isArray(d.foods) || !Array.isArray(d.exercises)) {
         throw new Error("格式錯誤");
       }
+      d.weightHistory = normalizeWeightHistory(d.weightHistory);
       if (Array.isArray(raw.records) && db) {
         for (const record of raw.records) {
           await putRecord(db, record);
@@ -756,11 +943,45 @@ export default function App() {
     return `${r.name} ${r.snapshot?.date || ''}`.toLowerCase().includes(term);
   });
 
+  const weightHistory = sortWeightHistory(normalizeWeightHistory(data.weightHistory));
+  const weightValues = weightHistory.map((point) => point.weight);
+  const weightChart = {
+    width: 1420,
+    height: 540,
+    left: 88,
+    right: 30,
+    top: 54,
+    bottom: 126,
+    min: Math.min(59, Math.floor(Math.min(...weightValues))),
+    max: Math.max(68, Math.ceil(Math.max(...weightValues)))
+  };
+  const weightPlotWidth = weightChart.width - weightChart.left - weightChart.right;
+  const weightPlotHeight = weightChart.height - weightChart.top - weightChart.bottom;
+  const weightPoints = weightHistory.map((point, index) => ({
+    ...point,
+    x: weightChart.left + (index / Math.max(1, weightHistory.length - 1)) * weightPlotWidth,
+    y: weightChart.top + ((weightChart.max - point.weight) / (weightChart.max - weightChart.min)) * weightPlotHeight
+  }));
+  const weightLine = weightPoints.map((point) => `${point.x},${point.y}`).join(' ');
+  const weightArea = `M ${weightPoints[0].x} ${weightChart.height - weightChart.bottom} L ${weightLine.replaceAll(',', ' ')} L ${weightPoints[weightPoints.length - 1].x} ${weightChart.height - weightChart.bottom} Z`;
+  const weightTicks = Array.from(
+    { length: weightChart.max - weightChart.min + 1 },
+    (_, index) => weightChart.min + index
+  );
+  const lowestWeight = Math.min(...weightHistory.map((point) => point.weight));
+  const latestWeight = weightHistory[weightHistory.length - 1].weight;
+  const weightChange = Math.round((latestWeight - weightHistory[0].weight) * 10) / 10;
+
   return (
     <>
       <header>
-        <h1>✨ 閃耀體態</h1>
-        <p>飲食卡路里管家・AI 智能升級版</p>
+        <div className="brand-heading">
+          <img className="bear-brand-icon" src="/assets/sansan-bear-icon.svg" alt="珊珊熊熊" />
+          <div>
+            <h1>✨ 閃耀體態</h1>
+            <p>飲食卡路里管家・AI 智能升級版</p>
+          </div>
+        </div>
         <div className="tag">健康紀錄只存在此瀏覽器；照片經安全伺服器傳給 Gemini AI 分析</div>
       </header>
 
@@ -900,6 +1121,121 @@ export default function App() {
             </div>
           </section>
 
+          {/* Embedded historical weight chart */}
+          <section className="card wide weight-card">
+            <div className="weight-heading">
+              <div>
+                <h2>❄️ 珊珊體重趨勢</h2>
+                <p>已嵌入你提供的 2025–2026 測量紀錄</p>
+              </div>
+              <div className="weight-summary">
+                <span><b>{latestWeight.toFixed(1)}</b> kg<br /><small>最新</small></span>
+                <span><b>{lowestWeight.toFixed(1)}</b> kg<br /><small>最低點</small></span>
+                <span><b>{weightChange > 0 ? '+' : ''}{weightChange.toFixed(1)}</b> kg<br /><small>相比第一筆</small></span>
+              </div>
+            </div>
+            <div className="weight-chart-shell">
+              <svg
+                className="weight-chart"
+                viewBox={`0 0 ${weightChart.width} ${weightChart.height}`}
+                role="img"
+                aria-label="2025 到 2026 年歷史體重折線圖"
+              >
+                <defs>
+                  <linearGradient id="weightSky" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#b8e4f7" />
+                    <stop offset="100%" stopColor="#eaf8ff" />
+                  </linearGradient>
+                  <linearGradient id="weightArea" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#ffffff" stopOpacity="0.78" />
+                    <stop offset="100%" stopColor="#ffffff" stopOpacity="0.08" />
+                  </linearGradient>
+                  <filter id="weightShadow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#5b9fc0" floodOpacity="0.35" />
+                  </filter>
+                </defs>
+                <rect width={weightChart.width} height={weightChart.height} rx="24" fill="url(#weightSky)" />
+                <text x="42" y="42" className="weight-snowflake">✦</text>
+                <text x={weightChart.width - 68} y="52" className="weight-snowflake">✧</text>
+                <text x={weightChart.width / 2} y="37" textAnchor="middle" className="weight-chart-title">珊珊體重趨勢</text>
+
+                {weightTicks.map((tick) => {
+                  const y = weightChart.top + ((weightChart.max - tick) / (weightChart.max - weightChart.min)) * weightPlotHeight;
+                  return (
+                    <g key={tick}>
+                      <line
+                        x1={weightChart.left}
+                        x2={weightChart.width - weightChart.right}
+                        y1={y}
+                        y2={y}
+                        className="weight-gridline"
+                      />
+                      <text x={weightChart.left - 16} y={y + 5} textAnchor="end" className="weight-axis-label">{tick}</text>
+                    </g>
+                  );
+                })}
+
+                <text x="28" y={weightChart.top + weightPlotHeight / 2} textAnchor="middle" className="weight-axis-title" transform={`rotate(-90 28 ${weightChart.top + weightPlotHeight / 2})`}>體重（kg）</text>
+                <line x1={weightChart.left} x2={weightChart.left} y1={weightChart.top} y2={weightChart.height - weightChart.bottom} className="weight-axis" />
+                <line x1={weightChart.left} x2={weightChart.width - weightChart.right} y1={weightChart.height - weightChart.bottom} y2={weightChart.height - weightChart.bottom} className="weight-axis" />
+
+                <path d={weightArea} fill="url(#weightArea)" />
+                <polyline points={weightLine} fill="none" stroke="#ffffff" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" opacity="0.85" />
+                <polyline points={weightLine} fill="none" stroke="#74b9d8" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
+
+                {weightPoints.map((point, index) => (
+                  <g key={point.date} filter="url(#weightShadow)">
+                    <image href="/assets/sansan-bear-icon.svg" x={point.x - 18} y={point.y - 18} width="36" height="36" preserveAspectRatio="xMidYMid slice" aria-label={`${point.date} ${point.weight} kg`} />
+                    <text x={point.x} y={point.y - 23} textAnchor="middle" className="weight-value-label">{point.weight.toFixed(1)}</text>
+                    <text x={point.x} y={weightChart.height - weightChart.bottom + 30} textAnchor="middle" className="weight-date-label" transform={`rotate(-42 ${point.x} ${weightChart.height - weightChart.bottom + 30})`}>{point.label}</text>
+                    {index === 0 || weightHistory[index - 1].date.slice(0, 4) !== point.date.slice(0, 4) ? (
+                      <text x={point.x} y={weightChart.height - 18} textAnchor="middle" className="weight-year-label">{point.date.slice(0, 4)}</text>
+                    ) : null}
+                  </g>
+                ))}
+                <text x={weightChart.width / 2} y={weightChart.height - 18} textAnchor="middle" className="weight-axis-title">日期</text>
+              </svg>
+            </div>
+            <form id="weightForm" className="weight-entry" onSubmit={handleWeightSubmit}>
+              <div className="weight-entry-heading">
+                <img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg" alt="珊珊熊熊" />
+                <div>
+                  <b>{editingWeightDate ? "修改體重紀錄" : "不定時新增體重"}</b>
+                  <div className="notice">不用每天輸入；有測量時填寫日期與體重，儲存後會立即更新趨勢圖。</div>
+                </div>
+              </div>
+              <div className="fields">
+                <label>
+                  日期
+                  <input id="weightDate" type="date" required value={weightDate} onChange={(e) => setWeightDate(e.target.value)} />
+                </label>
+                <label>
+                  體重 kg
+                  <input id="weightValue" type="number" min="25" max="300" step="0.1" required value={weightValue} onChange={(e) => setWeightValue(e.target.value)} placeholder="例如：64.2" />
+                </label>
+              </div>
+              <div className="actions">
+                <button className="pink" type="submit">{editingWeightDate ? "更新體重" : "新增體重"}</button>
+                {editingWeightDate && <button className="ghost" type="button" onClick={resetWeightEditor}>取消修改</button>}
+              </div>
+            </form>
+            <details className="weight-records">
+              <summary>管理體重紀錄（{weightHistory.length} 筆）</summary>
+              <div className="weight-record-list">
+                {[...weightHistory].reverse().map((point) => (
+                  <div className="weight-record" key={point.date}>
+                    <span><b>{point.date}</b>・{point.weight.toFixed(1)} kg</span>
+                    <span className="actions">
+                      <button className="ghost" type="button" onClick={() => handleEditWeight(point)}>編輯</button>
+                      <button className="danger" type="button" onClick={() => handleDeleteWeight(point.date)}>刪除</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </details>
+            <div className="notice weight-note">最低點為 2025/12/15 的 {lowestWeight.toFixed(1)} kg；圖表資料是你提供的歷史測量，不會因修改目前體重設定而被覆蓋。</div>
+          </section>
+
           {/* Water card */}
           <section className="card">
             <h2>💧 今日喝水</h2>
@@ -926,31 +1262,56 @@ export default function App() {
           {/* Add Food Card */}
           <section className="card">
             <h2>🍱 新增飲食</h2>
-            <div className="ai-box">
-              <b>✨ AI 照片分析</b>
-              <div className="fields" style={{ marginTop: "9px" }}>
-                <label>
-                  AI 服務
-                  <select
-                    id="aiProvider"
-                    value={aiProvider}
-                    onChange={(e) => {
-                      setAiProvider(e.target.value);
-                      localStorage.setItem(AI_PROVIDER_STORE, e.target.value);
-                      setAiStatus(`已切換為 ${e.target.value === 'gemini' ? 'Gemini AI' : 'OpenRouter 免費 Vision'}。`);
-                    }}
-                  >
-                    <option value="gemini">Gemini</option>
-                    <option value="openrouter">OpenRouter 免費 Vision (模擬轉向)</option>
-                  </select>
+            <div className="ai-box" style={{ marginBottom: "12px" }}>
+              <div className="ai-heading"><img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg" alt="珊珊熊熊" /><b>💬 自然語言查詢熱量</b></div>
+              <div className="notice" style={{ marginTop: "6px" }}>
+                直接輸入「711 阜杭豆漿飯糰」或「雞胸肉便當」；目前優先使用 NVIDIA API 估算，資訊不足時再向你確認。
+              </div>
+              <label style={{ display: "block", marginTop: "9px" }}>
+                餐點描述
+                <textarea
+                  id="foodText"
+                  rows={2}
+                  value={foodText}
+                  onChange={(e) => setFoodText(e.target.value)}
+                  placeholder="例如：711 阜杭豆漿飯糰、雞胸肉便當（飯吃一半）"
+                  disabled={isAnalyzingText}
+                />
+              </label>
+              {textNeedsConfirmation && (
+                <label style={{ display: "block", marginTop: "9px" }}>
+                  補充回答
+                  <input
+                    id="foodFollowUpAnswer"
+                    value={foodFollowUpAnswer}
+                    onChange={(e) => setFoodFollowUpAnswer(e.target.value)}
+                    placeholder="請回答上方問題，例如：白飯正常一碗，沒有炸物"
+                    disabled={isAnalyzingText}
+                  />
                 </label>
+              )}
+              <div className="actions">
+                <button
+                  id="analyzeFoodText"
+                  className="pink"
+                  type="button"
+                  disabled={isAnalyzingText || !foodText.trim() || (textNeedsConfirmation && !foodFollowUpAnswer.trim())}
+                  onClick={handleAnalyzeFoodText}
+                >
+                  {isAnalyzingText ? "搜尋中…" : textNeedsConfirmation ? "送出補充回答" : "查詢熱量"}
+                </button>
+              </div>
+            </div>
+            <div className="ai-box">
+              <div className="ai-heading"><img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg" alt="珊珊熊熊" /><b>✨ AI 影像辨識</b></div>
+              <div className="fields" style={{ marginTop: "9px" }}>
+                <div className="notice">照片分析服務：NVIDIA Vision（主要），Gemini（備援）。API key 只在伺服器端維護。</div>
                 <label>
                   選擇或拍攝食物照片
                   <input
                     id="foodPhoto"
                     type="file"
                     accept="image/*"
-                    capture="environment"
                     ref={fileInputRef}
                     onChange={handlePhotoChange}
                   />
@@ -996,6 +1357,16 @@ export default function App() {
                 />
               )}
               <div id="aiStatus" className="status">{aiStatus}</div>
+              {aiSources.length > 0 && (
+                <div className="notice" style={{ marginTop: "8px" }}>
+                  資料來源：{aiSources.map((source, index) => (
+                    <React.Fragment key={source.url}>
+                      {index > 0 ? "、" : ""}
+                      <a href={source.url} target="_blank" rel="noreferrer">{source.title}</a>
+                    </React.Fragment>
+                  ))}
+                </div>
+              )}
             </div>
 
             <form id="foodForm" onSubmit={handleFoodSubmit}>
@@ -1285,3 +1656,4 @@ export default function App() {
     </>
   );
 }
+
