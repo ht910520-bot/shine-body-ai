@@ -29,8 +29,11 @@ Health check: `/api/health`
 
 ## NVIDIA image analysis
 
-Food-photo analysis uses NVIDIA NIM when `NVIDIA_API_KEY` is configured. It
-defaults to `meta/llama-3.2-11b-vision-instruct` and stops an individual model
-request after 15 seconds. Optionally set `NVIDIA_VISION_FALLBACK_MODEL` to one
-additional model and `NVIDIA_VISION_TIMEOUT_MS` (1,000–25,000 ms) in your
-deployment environment.
+Food-photo analysis uses NVIDIA NIM when `NVIDIA_API_KEY` is configured. The
+default model chain is `nvidia/llama-3.1-nemotron-nano-vl-8b-v1`, followed by
+`meta/llama-3.2-11b-vision-instruct` and
+`meta/llama-3.2-90b-vision-instruct`; the first valid result stops the chain.
+Each request is capped at 15 seconds and the complete NVIDIA chain is capped
+at 40 seconds. Set `NVIDIA_VISION_MODELS` to replace the full chain, or set
+`NVIDIA_VISION_FALLBACK_MODELS` to replace the fallback list. The legacy
+`NVIDIA_VISION_FALLBACK_MODEL` variable is still supported.

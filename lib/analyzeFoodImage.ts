@@ -39,11 +39,16 @@ export const foodImageResponseSchema = {
 
 
 const NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions";
-// Keep image analysis predictable on serverless runtimes. The previous list
-// retried four providers/models serially, which could exceed Vercel's function
-// duration before a response was returned.
-const DEFAULT_NVIDIA_VISION_MODEL = "meta/llama-3.2-11b-vision-instruct";
+// Keep image analysis predictable on serverless runtimes. Models are tried in
+// order and the first valid result ends the chain. The Nano VL model is the
+// fastest primary; the two Llama 3.2 vision models are bounded fallbacks.
+const DEFAULT_NVIDIA_VISION_MODELS = [
+  "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+  "meta/llama-3.2-11b-vision-instruct",
+  "meta/llama-3.2-90b-vision-instruct"
+];
 const DEFAULT_NVIDIA_TIMEOUT_MS = 15_000;
+const DEFAULT_NVIDIA_TOTAL_TIMEOUT_MS = 40_000;
 
 
 function parseJson(text: string) {
@@ -97,6 +102,14 @@ function messageText(content: any) {
 
 function safeMimeType(mimeType?: string) {
   return /^image\/(jpeg|jpg|png|webp)$/i.test(mimeType || "") ? mimeType : "image/jpeg";
+}
+
+
+function parseModelList(value?: string) {
+  return (value || "")
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
 }
 
 
@@ -158,15 +171,35 @@ async function analyzeWithNvidia(image: string, mimeType?: string) {
   if (!apiKey) throw new Error("未設定 NVIDIA API key。");
 
 
-  const primaryModel = process.env.NVIDIA_VISION_MODEL || DEFAULT_NVIDIA_VISION_MODEL;
-  const fallbackModel = process.env.NVIDIA_VISION_FALLBACK_MODEL;
-  const models = [...new Set([primaryModel, fallbackModel].filter(Boolean))] as string[];
+  const primaryModel = process.env.NVIDIA_VISION_MODEL || DEFAULT_NVIDIA_VISION_MODELS[0];
+  const configuredModels = parseModelList(process.env.NVIDIA_VISION_MODELS);
+  const configuredFallbackModels = [
+    ...parseModelList(process.env.NVIDIA_VISION_FALLBACK_MODELS),
+    ...parseModelList(process.env.NVIDIA_VISION_FALLBACK_MODEL)
+  ];
+  const models = configuredModels.length
+    ? [...new Set(configuredModels)]
+    : [...new Set([
+      primaryModel,
+      ...configuredFallbackModels,
+      ...(configuredFallbackModels.length
+        ? []
+        : DEFAULT_NVIDIA_VISION_MODELS.filter((model) => model !== primaryModel))
+    ])];
   const configuredTimeout = Number(process.env.NVIDIA_VISION_TIMEOUT_MS);
   const timeoutMs = Number.isFinite(configuredTimeout)
     ? Math.min(Math.max(configuredTimeout, 1_000), 25_000)
     : DEFAULT_NVIDIA_TIMEOUT_MS;
+  const configuredTotalTimeout = Number(process.env.NVIDIA_VISION_TOTAL_TIMEOUT_MS);
+  const totalTimeoutMs = Number.isFinite(configuredTotalTimeout)
+    ? Math.min(Math.max(configuredTotalTimeout, 10_000), 50_000)
+    : DEFAULT_NVIDIA_TOTAL_TIMEOUT_MS;
+  const startedAt = Date.now();
   let lastError: any;
   for (const model of models) {
+    const remainingMs = totalTimeoutMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) break;
+    const requestTimeoutMs = Math.min(timeoutMs, remainingMs);
     try {
       const isQwen = model === "qwen/qwen3.5-397b-a17b";
       const response = await fetch(NVIDIA_ENDPOINT, {
@@ -192,7 +225,7 @@ async function analyzeWithNvidia(image: string, mimeType?: string) {
       stream: false,
       ...(isQwen ? { chat_template_kwargs: { enable_thinking: false } } : {})
     }),
-        signal: AbortSignal.timeout(timeoutMs)
+        signal: AbortSignal.timeout(requestTimeoutMs)
       });
       const payload: any = await response.json().catch(() => ({}));
       if (!response.ok) {
