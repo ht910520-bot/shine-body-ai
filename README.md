@@ -26,3 +26,11 @@ Express API as one Railway service. Configure `GEMINI_API_KEY` as a Railway
 environment variable; never commit a real key to GitHub.
 
 Health check: `/api/health`
+
+## NVIDIA image analysis
+
+Food-photo analysis uses NVIDIA NIM when `NVIDIA_API_KEY` is configured. It
+defaults to `meta/llama-3.2-11b-vision-instruct` and stops an individual model
+request after 15 seconds. Optionally set `NVIDIA_VISION_FALLBACK_MODEL` to one
+additional model and `NVIDIA_VISION_TIMEOUT_MS` (1,000–25,000 ms) in your
+deployment environment.

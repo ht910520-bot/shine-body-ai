@@ -39,12 +39,11 @@ export const foodImageResponseSchema = {
 
 
 const NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions";
-const nvidiaModels = [
-  "qwen/qwen3.5-397b-a17b",
-  "meta/llama-3.2-90b-vision-instruct",
-  "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
-  "meta/llama-3.2-11b-vision-instruct"
-];
+// Keep image analysis predictable on serverless runtimes. The previous list
+// retried four providers/models serially, which could exceed Vercel's function
+// duration before a response was returned.
+const DEFAULT_NVIDIA_VISION_MODEL = "meta/llama-3.2-11b-vision-instruct";
+const DEFAULT_NVIDIA_TIMEOUT_MS = 15_000;
 
 
 function parseJson(text: string) {
@@ -52,9 +51,36 @@ function parseJson(text: string) {
   try {
     return JSON.parse(cleaned);
   } catch {
+    // Vision models sometimes append an explanation after an otherwise valid
+    // JSON object. Extract the first balanced object instead of using the last
+    // closing brace, which can accidentally include the trailing explanation.
     const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+    if (start >= 0) {
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      for (let index = start; index < cleaned.length; index += 1) {
+        const character = cleaned[index];
+        if (inString) {
+          if (escaped) {
+            escaped = false;
+          } else if (character === "\\") {
+            escaped = true;
+          } else if (character === '"') {
+            inString = false;
+          }
+          continue;
+        }
+        if (character === '"') {
+          inString = true;
+        } else if (character === "{") {
+          depth += 1;
+        } else if (character === "}") {
+          depth -= 1;
+          if (depth === 0) return JSON.parse(cleaned.slice(start, index + 1));
+        }
+      }
+    }
     throw new Error("AI 沒有回傳可讀取的 JSON。");
   }
 }
@@ -118,7 +144,13 @@ async function analyzeWithNvidia(image: string, mimeType?: string) {
   if (!apiKey) throw new Error("未設定 NVIDIA API key。");
 
 
-  const models = process.env.NVIDIA_VISION_MODEL ? [process.env.NVIDIA_VISION_MODEL] : nvidiaModels;
+  const primaryModel = process.env.NVIDIA_VISION_MODEL || DEFAULT_NVIDIA_VISION_MODEL;
+  const fallbackModel = process.env.NVIDIA_VISION_FALLBACK_MODEL;
+  const models = [...new Set([primaryModel, fallbackModel].filter(Boolean))] as string[];
+  const configuredTimeout = Number(process.env.NVIDIA_VISION_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(configuredTimeout)
+    ? Math.min(Math.max(configuredTimeout, 1_000), 25_000)
+    : DEFAULT_NVIDIA_TIMEOUT_MS;
   let lastError: any;
   for (const model of models) {
     try {
@@ -142,10 +174,11 @@ async function analyzeWithNvidia(image: string, mimeType?: string) {
       }],
       temperature: isQwen ? 0.2 : 0.1,
       top_p: isQwen ? 0.8 : 1,
-      max_tokens: 1400,
+      max_tokens: 700,
       stream: false,
       ...(isQwen ? { chat_template_kwargs: { enable_thinking: false } } : {})
-    })
+    }),
+        signal: AbortSignal.timeout(timeoutMs)
       });
       const payload: any = await response.json().catch(() => ({}));
       if (!response.ok) {
