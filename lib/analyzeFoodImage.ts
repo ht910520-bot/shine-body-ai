@@ -218,7 +218,7 @@ async function analyzeWithNvidia(image: string, mimeType?: string) {
 
 async function analyzeWithGemini(ai: GoogleGenAI, image: string, mimeType?: string) {
   const imagePart = { inlineData: { mimeType: safeMimeType(mimeType), data: image } };
-  const responseModels = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+  const responseModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
   let response: any;
   let usedModel = responseModels[0];
   let lastError: any;

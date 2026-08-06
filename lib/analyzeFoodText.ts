@@ -39,7 +39,7 @@ export const foodTextResponseSchema = {
 };
 
 
-const models = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+const models = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
 const NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions";
 
 
