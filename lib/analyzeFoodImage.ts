@@ -100,12 +100,26 @@ function safeMimeType(mimeType?: string) {
 }
 
 
-const imagePrompt = `請分析這張食物照片，辨識所有看得到的食物與配菜，估算整份餐點的總熱量，以及蛋白質、碳水、脂肪（公克）。請使用繁體中文。照片分析只能估算，不能聲稱知道精確重量或官方營養標示。只要照片中看得到食物，就不可以把熱量填 0；請依常見份量給合理估算，只有完全沒有食物或圖片無法讀取時才可填 0。只回傳 JSON，不要 Markdown，格式如下：
-{"items":[{"name":"食物名稱","calories":0,"protein":0,"carbs":0,"fat":0}],"totalCalories":0,"confidence":"medium","notes":"估算備註","food":{"name":"主餐點名稱","calories":0,"protein":0,"carbs":0,"fat":0,"description":"份量假設與分析說明"}}`;
+// NVIDIA's hosted vision models officially expect English instructions for
+// image+text requests. Keep the prompt in English, but ask for Traditional
+// Chinese display strings so the result still matches the app UI. Avoid a JSON
+// example filled with zeroes because smaller vision models tend to copy them.
+const imagePrompt = `Analyze the attached meal photo. Identify every visible food and side dish, then estimate realistic calories, protein, carbohydrates, and fat for the entire visible serving.
+
+Return exactly one valid JSON object without Markdown. It must contain:
+- "items": an array of objects with "name", "calories", "protein", "carbs", and "fat".
+- "totalCalories": the integer calorie total for all items.
+- "confidence": exactly "high", "medium", or "low".
+- "notes": a short estimation note.
+- "food": an object with "name", "calories", "protein", "carbs", "fat", and "description" for the whole meal.
+
+Use numbers only for all nutrition fields, without units. If any edible food is visible, every applicable calorie estimate and totalCalories must be greater than zero; do not use placeholder zeroes. Use reasonable common serving sizes when exact weight is unknown. Only return zero calories when there is no food or the image cannot be read. Do not claim exact weights or official nutrition facts. Write all human-readable names, notes, and descriptions in Traditional Chinese.`;
 
 
 function positiveNumber(value: any) {
-  const number = Number(value);
+  const number = typeof value === "string"
+    ? Number(value.match(/-?\d+(?:\.\d+)?/)?.[0])
+    : Number(value);
   return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
@@ -168,8 +182,8 @@ async function analyzeWithNvidia(image: string, mimeType?: string) {
       messages: [{
         role: "user",
         content: [
-          { type: "text", text: imagePrompt },
-          { type: "image_url", image_url: { url: `data:${safeMimeType(mimeType)};base64,${image}` } }
+          { type: "image_url", image_url: { url: `data:${safeMimeType(mimeType)};base64,${image}` } },
+          { type: "text", text: imagePrompt }
         ]
       }],
       temperature: isQwen ? 0.2 : 0.1,
