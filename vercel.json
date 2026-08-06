@@ -7,6 +7,9 @@
     "api/analyze-food.ts": {
       "maxDuration": 60
     },
+    "api/analyze-food-text.ts": {
+      "maxDuration": 30
+    },
     "api/login.ts": {
       "maxDuration": 10
     },

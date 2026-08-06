@@ -480,9 +480,8 @@ export default function App() {
           const ctx = canvas.getContext('2d');
           if (ctx) {
             ctx.drawImage(image, 0, 0, width, height);
-            // Qwen's inline image endpoint has a roughly 180 KB limit. Keep
-            // the browser payload below that limit so Qwen can remain the
-            // primary model instead of falling back for ordinary phone photos.
+            // Keep the browser payload below the hosted vision endpoint's
+            // inline-image limit so ordinary phone photos remain reliable.
             let quality = 0.78;
             let dataUrl = canvas.toDataURL('image/jpeg', quality);
             const inlineLimitBytes = 170_000;
@@ -606,7 +605,7 @@ export default function App() {
     }
 
     setIsAnalyzingText(true);
-    setAiStatus("Gemini 正在搜尋餐點資料與營養標示…");
+    setAiStatus("NVIDIA 文字模型分析中（失敗才回退 Gemini）…");
     try {
       const response = await fetch("/api/analyze-food-text", {
         method: "POST",

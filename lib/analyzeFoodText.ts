@@ -41,6 +41,8 @@ export const foodTextResponseSchema = {
 
 const models = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
 const NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions";
+const DEFAULT_NVIDIA_TEXT_MODEL = "meta/llama-3.1-8b-instruct";
+const DEFAULT_NVIDIA_TEXT_TIMEOUT_MS = 12_000;
 
 
 function parseJson(text: string) {
@@ -91,8 +93,12 @@ export async function analyzeFoodText(
   if (nvidiaApiKey) {
     try {
       const model = process.env.NVIDIA_MODEL || (
-        process.env.NVIDIA_API_KEY ? "meta/llama-3.1-70b-instruct" : "deepseek-ai/deepseek-v4-flash"
+        process.env.NVIDIA_API_KEY ? DEFAULT_NVIDIA_TEXT_MODEL : "deepseek-ai/deepseek-v4-flash"
       );
+      const configuredTimeout = Number(process.env.NVIDIA_TEXT_TIMEOUT_MS);
+      const timeoutMs = Number.isFinite(configuredTimeout)
+        ? Math.min(Math.max(configuredTimeout, 3_000), 20_000)
+        : DEFAULT_NVIDIA_TEXT_TIMEOUT_MS;
       const response = await fetch(NVIDIA_ENDPOINT, {
         method: "POST",
         headers: {
@@ -113,7 +119,8 @@ export async function analyzeFoodText(
           temperature: 0.1,
           max_tokens: 1200,
           stream: false
-        })
+        }),
+        signal: AbortSignal.timeout(timeoutMs)
       });
       const payload: any = await response.json().catch(() => ({}));
       if (!response.ok) {

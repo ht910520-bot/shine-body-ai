@@ -30,7 +30,10 @@ export default async function handler(req: any, res: any) {
     const ai = apiKey
       ? new GoogleGenAI({
           apiKey,
-          httpOptions: { headers: { "User-Agent": "shine-body-ai-vercel" } }
+          httpOptions: {
+            headers: { "User-Agent": "shine-body-ai-vercel" },
+            timeout: 8_000
+          }
         })
       : null;
     const result = await analyzeFoodText(ai, text, followUpAnswer, previous);

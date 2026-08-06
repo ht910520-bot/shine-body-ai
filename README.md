@@ -37,3 +37,10 @@ Each request is capped at 15 seconds and the complete NVIDIA chain is capped
 at 40 seconds. Set `NVIDIA_VISION_MODELS` to replace the full chain, or set
 `NVIDIA_VISION_FALLBACK_MODELS` to replace the fallback list. The legacy
 `NVIDIA_VISION_FALLBACK_MODEL` variable is still supported.
+
+Natural-language meal lookup uses the faster `meta/llama-3.1-8b-instruct`
+model by default and gives the NVIDIA request a 12-second limit before using
+the Gemini fallback. Override it with `NVIDIA_MODEL` and
+`NVIDIA_TEXT_TIMEOUT_MS` when needed. NVIDIA lookup is an estimate and does
+not perform live product-label search; Gemini is the route that can use web
+grounding.

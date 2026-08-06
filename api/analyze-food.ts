@@ -29,7 +29,10 @@ export default async function handler(req: any, res: any) {
     const ai = apiKey
       ? new GoogleGenAI({
           apiKey,
-          httpOptions: { headers: { "User-Agent": "shine-body-ai-vercel" } }
+          httpOptions: {
+            headers: { "User-Agent": "shine-body-ai-vercel" },
+            timeout: 7_000
+          }
         })
       : null;
     const result = await analyzeFoodImage(ai, image, mimeType);
