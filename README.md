@@ -27,6 +27,22 @@ environment variable; never commit a real key to GitHub.
 
 Health check: `/api/health`
 
+## Cloud sync
+
+Logged-in diet, weight, and history records can sync across devices. The API
+stores one JSON document per deployment behind `GET`/`PUT /api/data`. Without
+the storage settings below, the app keeps using this browser and shows
+「僅本機」.
+
+Set these on the host (Vercel or Railway). Do not commit the token.
+
+- `DATA_STORAGE_ADAPTER=upstash`
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
+
+Conflicts keep the document with the newer `updatedAt`. An empty cloud account
+imports existing on-device data once. Importing a JSON backup uploads it too.
+
 ## NVIDIA image analysis
 
 Food-photo analysis uses NVIDIA NIM when `NVIDIA_API_KEY` is configured. The

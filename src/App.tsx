@@ -1,4 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
+import {
+  CLOUD_SAVE_DEBOUNCE_MS,
+  decideSyncAction,
+  loadCloudDocument,
+  readLocalUpdatedAt,
+  saveCloudDocument,
+  SYNC_STATUS_TEXT,
+  writeLocalUpdatedAt,
+  type SyncStatus
+} from "./cloudSync";
 
 // LocalStorage and DB keys matching original safe version
 const KEY = 'shine_body_standalone_v1';
@@ -150,6 +160,85 @@ const normalizeProfile = (value: any): Profile => ({
   targetWeight: normalizeTargetWeight(value?.targetWeight)
 });
 
+const normalizeAppData = (value: any): AppData => {
+  const merged: AppData = {
+    ...structuredClone(defaults),
+    date: typeof value?.date === "string" && value.date ? value.date : defaults.date,
+    profile: normalizeProfile(value?.profile),
+    water: Number.isFinite(Number(value?.water)) ? Number(value.water) : 0,
+    foods: Array.isArray(value?.foods) ? value.foods : [],
+    exercises: Array.isArray(value?.exercises) ? value.exercises : []
+  };
+  merged.weightHistory = normalizeWeightHistory(value?.weightHistory);
+  return merged;
+};
+
+const readPersistedAppData = (): { data: AppData; persisted: boolean } => {
+  try {
+    const stored = localStorage.getItem(KEY);
+    if (!stored) return { data: structuredClone(defaults), persisted: false };
+    return { data: normalizeAppData(JSON.parse(stored)), persisted: true };
+  } catch (error) {
+    console.error("Error loading localStorage data:", error);
+    return { data: structuredClone(defaults), persisted: false };
+  }
+};
+
+const rollToToday = (source: AppData): { data: AppData; rolled: boolean } => {
+  if (source.date === today()) return { data: source, rolled: false };
+  return {
+    rolled: true,
+    data: { ...source, date: today(), water: 0, foods: [], exercises: [] }
+  };
+};
+
+const canonicalAppData = (value: any) => JSON.stringify(normalizeAppData(value));
+
+const isUntouchedSnapshot = (snapshot: any) => {
+  const normalized = normalizeAppData(snapshot);
+  return canonicalAppData(normalized) === canonicalAppData({ ...defaults, date: normalized.date });
+};
+
+const hasSavedLocalData = (records: SnapshotRecord[]) => records.some((record) => (
+  record.type === "manual" || !isUntouchedSnapshot(record.snapshot)
+));
+
+const readCloudBackup = (data: unknown): { current: AppData; records: SnapshotRecord[] } | null => {
+  if (!data || typeof data !== "object") return null;
+  const record = data as { current?: unknown; records?: unknown; profile?: unknown; foods?: unknown; exercises?: unknown };
+  const currentSource = record.current && typeof record.current === "object" ? record.current : record;
+  const currentRecord = currentSource as { profile?: unknown; foods?: unknown; exercises?: unknown };
+  if (!currentRecord.profile || !Array.isArray(currentRecord.foods) || !Array.isArray(currentRecord.exercises)) return null;
+  const records = Array.isArray(record.records)
+    ? record.records.filter((item): item is SnapshotRecord => Boolean(
+        item &&
+        typeof item === "object" &&
+        typeof (item as SnapshotRecord).id === "string" &&
+        (item as SnapshotRecord).snapshot &&
+        typeof (item as SnapshotRecord).snapshot === "object"
+      ))
+    : [];
+  return { current: normalizeAppData(currentSource), records };
+};
+
+const buildBackup = (current: AppData, records: SnapshotRecord[]) => ({
+  format: "shine-body-backup" as const,
+  version: 2 as const,
+  current,
+  records
+});
+
+let cloudSyncQueue: Promise<void> = Promise.resolve();
+
+const enqueueCloudSync = (task: () => Promise<void>) => {
+  const run = cloudSyncQueue.then(task, task);
+  cloudSyncQueue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+};
+
 // METS configuration for exercises
 const METS: Record<string, number> = {
   "快走": 4.3,
@@ -159,31 +248,29 @@ const METS: Record<string, number> = {
 
 export default function App() {
   // --- States ---
+  const persistedAtLaunchRef = useRef(false);
+  const hadUserDataRef = useRef<boolean | null>(null);
   const [data, setData] = useState<AppData>(() => {
-    try {
-      const stored = localStorage.getItem(KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        const merged = { ...defaults, ...parsed, profile: normalizeProfile(parsed.profile) };
-        merged.weightHistory = normalizeWeightHistory(parsed.weightHistory);
-        // Check date change
-        if (merged.date !== today()) {
-          merged.date = today();
-          merged.water = 0;
-          merged.foods = [];
-          merged.exercises = [];
-          localStorage.setItem(KEY, JSON.stringify(merged));
-        }
-        return merged;
-      }
-    } catch (e) {
-      console.error("Error loading localStorage data:", e);
-    }
-    return structuredClone(defaults);
+    const loaded = readPersistedAppData();
+    persistedAtLaunchRef.current = loaded.persisted;
+    return rollToToday(loaded.data).data;
   });
+  const dataRef = useRef(data);
+  const recordsRef = useRef<SnapshotRecord[]>([]);
+  const dbRef = useRef<IDBDatabase | null>(null);
+  const updatedAtRef = useRef<string | null>(readLocalUpdatedAt());
+  const userEditedRef = useRef(false);
+  const storageModeRef = useRef<"unknown" | "ready" | "disabled">("unknown");
+  const saveTimerRef = useRef<number | null>(null);
+  const archiveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const syncingRef = useRef(false);
+  const syncAgainRef = useRef(false);
+  const reconcileRef = useRef<() => Promise<void>>(async () => {});
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
 
   // DB reference state
   const [db, setDb] = useState<IDBDatabase | null>(null);
+  dbRef.current = db;
   const [records, setRecords] = useState<SnapshotRecord[]>([]);
   const [recordSearch, setRecordSearch] = useState("");
   const [recordName, setRecordName] = useState("");
@@ -218,7 +305,7 @@ export default function App() {
   // AI Food Photo Analysis
   const [shareCount, setShareCount] = useState<number>(1);
   const [selectedPhoto, setSelectedPhoto] = useState<{ dataUrl: string; base64: string; mimeType: string } | null>(null);
-  const [aiStatus, setAiStatus] = useState("每位朋友的紀錄只保存在自己的瀏覽器；AI 結果僅為估算。");
+  const [aiStatus, setAiStatus] = useState("AI 結果僅為估算，請確認後再加入紀錄。");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [lastAiFood, setLastAiFood] = useState<any>(null);
   const [foodText, setFoodText] = useState("");
@@ -252,6 +339,7 @@ export default function App() {
     };
     request.onerror = (e) => {
       console.error("IndexedDB load error", e);
+      void reconcileRef.current();
     };
   }, []);
 
@@ -297,30 +385,320 @@ export default function App() {
   const loadHistoryRecords = async (dbInstance: IDBDatabase) => {
     try {
       const loaded = await getRecords(dbInstance);
+      recordsRef.current = loaded;
       setRecords(loaded);
     } catch (err) {
       console.error("Failed to load records", err);
     }
   };
 
-  useEffect(() => {
-    if (db) {
-      loadHistoryRecords(db);
-      // Auto archive today
-      const currentSnapshot = structuredClone(data);
-      putRecord(db, {
-        id: `daily:${data.date}`,
-        name: data.date,
-        type: 'daily',
-        createdAt: new Date().toISOString(),
-        snapshot: currentSnapshot
-      }).then(() => {
-        loadHistoryRecords(db);
-      }).catch(err => {
-        console.error("Auto archive today failed", err);
-      });
+  const publishRecords = (next: SnapshotRecord[]) => {
+    recordsRef.current = next;
+    setRecords(next);
+  };
+
+  const publishCurrent = (next: AppData) => {
+    const normalized = normalizeAppData(next);
+    dataRef.current = normalized;
+    setData(normalized);
+    localStorage.setItem(KEY, JSON.stringify(normalized));
+    return normalized;
+  };
+
+  const syncProfileFields = (profile: Profile) => {
+    setProfileGender(profile.gender);
+    setProfileAge(profile.age);
+    setProfileHeight(profile.height);
+    setProfileWeight(profile.weight);
+    setProfileActivity(profile.activity);
+    setProfileGoal(profile.goal);
+    setProfileWaterTarget(profile.waterTarget);
+    setProfileTargetWeight(profile.targetWeight);
+  };
+
+  const markLocalChange = () => {
+    const updatedAt = new Date().toISOString();
+    updatedAtRef.current = updatedAt;
+    writeLocalUpdatedAt(updatedAt);
+    userEditedRef.current = true;
+    return updatedAt;
+  };
+
+  const rememberUpdatedAt = (updatedAt: string) => {
+    const normalized = new Date(updatedAt).toISOString();
+    updatedAtRef.current = normalized;
+    writeLocalUpdatedAt(normalized);
+    userEditedRef.current = false;
+  };
+
+  const ensureDaily = async (snapshot: AppData) => {
+    const database = dbRef.current;
+    if (!database) return false;
+    const normalized = normalizeAppData(snapshot);
+    const canonical = canonicalAppData(normalized);
+    const existing = recordsRef.current.find((record) => record.id === `daily:${normalized.date}`);
+    if (existing && canonicalAppData(existing.snapshot) === canonical) return false;
+    await putRecord(database, {
+      id: `daily:${normalized.date}`,
+      name: normalized.date,
+      type: "daily",
+      createdAt: new Date().toISOString(),
+      snapshot: structuredClone(normalized)
+    });
+    publishRecords(await getRecords(database));
+    return true;
+  };
+
+  const replaceHistory = async (next: SnapshotRecord[]) => {
+    const database = dbRef.current;
+    if (!database) {
+      publishRecords(next);
+      return;
     }
+    await clearRecords(database);
+    for (const record of next) await putRecord(database, record);
+    publishRecords(await getRecords(database));
+  };
+
+  const persistLocalBaseline = async () => {
+    const current = hadUserDataRef.current || userEditedRef.current
+      ? publishCurrent(dataRef.current)
+      : dataRef.current;
+    try {
+      await ensureDaily(current);
+    } catch (error) {
+      console.error("Auto archive failed", error);
+    }
+  };
+
+  const applyRemoteBackup = async (payload: unknown, updatedAt: string) => {
+    const backup = readCloudBackup(payload);
+    if (!backup || userEditedRef.current) return false;
+    await replaceHistory(backup.records);
+    if (userEditedRef.current) return true;
+    const rolled = rollToToday(backup.current);
+    const current = publishCurrent(rolled.data);
+    syncProfileFields(current.profile);
+    const archived = await ensureDaily(current);
+    if (userEditedRef.current || rolled.rolled || archived) {
+      markLocalChange();
+      return true;
+    }
+    rememberUpdatedAt(updatedAt);
+    return false;
+  };
+
+  const pushLatest = async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (storageModeRef.current !== "ready") return;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        setSyncStatus("offline");
+        return;
+      }
+      await archiveQueueRef.current;
+      try {
+        await ensureDaily(dataRef.current);
+      } catch (error) {
+        console.error("Auto archive failed", error);
+      }
+      const sentUpdatedAt = updatedAtRef.current;
+      if (!sentUpdatedAt) {
+        setSyncStatus("synced");
+        return;
+      }
+      setSyncStatus("saving");
+      const result = await saveCloudDocument({
+        updatedAt: sentUpdatedAt,
+        data: buildBackup(dataRef.current, recordsRef.current)
+      });
+      if (sentUpdatedAt !== updatedAtRef.current) continue;
+      if (result.type === "unconfigured") {
+        storageModeRef.current = "disabled";
+        setSyncStatus("local");
+        return;
+      }
+      if (result.type === "offline") {
+        setSyncStatus("offline");
+        return;
+      }
+      if (result.type === "unauthorized") {
+        storageModeRef.current = "disabled";
+        setSyncStatus("error");
+        return;
+      }
+      if (result.type === "error" || result.type === "empty") {
+        setSyncStatus("error");
+        return;
+      }
+      if (result.document.saved === false) {
+        const followUp = await applyRemoteBackup(result.document.data, result.document.updatedAt);
+        if (userEditedRef.current || followUp) continue;
+        setSyncStatus("synced");
+        return;
+      }
+      userEditedRef.current = false;
+      setSyncStatus("synced");
+      return;
+    }
+  };
+
+  const scheduleCloudSave = () => {
+    if (storageModeRef.current !== "ready") return;
+    setSyncStatus("saving");
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      void enqueueCloudSync(() => pushLatest());
+    }, CLOUD_SAVE_DEBOUNCE_MS);
+  };
+
+  const enqueueArchive = (snapshot: AppData) => {
+    archiveQueueRef.current = archiveQueueRef.current
+      .then(() => ensureDaily(snapshot))
+      .then(() => undefined)
+      .catch((error) => {
+        console.error("Auto archive failed", error);
+      });
+    return archiveQueueRef.current;
+  };
+
+  const updateDataAndSave = (updated: AppData) => {
+    const normalized = publishCurrent(updated);
+    markLocalChange();
+    void enqueueArchive(normalized).then(() => scheduleCloudSave());
+  };
+
+  const reconcile = async () => {
+    if (syncingRef.current) {
+      syncAgainRef.current = true;
+      return;
+    }
+    syncingRef.current = true;
+    try {
+      if (hadUserDataRef.current === null) {
+        let existing: SnapshotRecord[] = [];
+        if (dbRef.current) {
+          try {
+            existing = await getRecords(dbRef.current);
+          } catch (error) {
+            console.error("Failed to load records", error);
+          }
+        }
+        if (!userEditedRef.current) publishRecords(existing);
+        hadUserDataRef.current = persistedAtLaunchRef.current || hasSavedLocalData(existing);
+      }
+
+      const result = await loadCloudDocument<ReturnType<typeof buildBackup>>();
+      if (result.type === "unconfigured") {
+        storageModeRef.current = "disabled";
+        await persistLocalBaseline();
+        setSyncStatus("local");
+        return;
+      }
+      if (result.type === "offline") {
+        if (storageModeRef.current !== "disabled") storageModeRef.current = "ready";
+        await persistLocalBaseline();
+        setSyncStatus("offline");
+        return;
+      }
+      if (result.type === "unauthorized") {
+        storageModeRef.current = "disabled";
+        await persistLocalBaseline();
+        setSyncStatus("error");
+        return;
+      }
+      if (result.type === "error") {
+        if (storageModeRef.current !== "disabled") storageModeRef.current = "ready";
+        await persistLocalBaseline();
+        setSyncStatus("error");
+        return;
+      }
+
+      storageModeRef.current = "ready";
+      if (userEditedRef.current) {
+        await persistLocalBaseline();
+        await pushLatest();
+        return;
+      }
+
+      const cloudBackup = result.type === "document" ? readCloudBackup(result.document.data) : null;
+      if (result.type === "document" && !cloudBackup) {
+        await persistLocalBaseline();
+        setSyncStatus("error");
+        return;
+      }
+
+      const action = decideSyncAction({
+        cloud: result.type === "empty" ? "empty" : "present",
+        localUpdatedAt: updatedAtRef.current,
+        cloudUpdatedAt: result.type === "document" ? result.document.updatedAt : null,
+        hasPersistedLocal: hadUserDataRef.current === true,
+        userEdited: false,
+        localDate: dataRef.current.date,
+        cloudDate: cloudBackup?.current.date
+      });
+
+      if (action === "download" && result.type === "document") {
+        const followUp = await applyRemoteBackup(result.document.data, result.document.updatedAt);
+        if (userEditedRef.current || followUp) {
+          await pushLatest();
+          return;
+        }
+        setSyncStatus("synced");
+        return;
+      }
+
+      const current = hadUserDataRef.current ? publishCurrent(dataRef.current) : dataRef.current;
+      const archived = await ensureDaily(current);
+      const shouldUpload = action === "upload" || (archived && hadUserDataRef.current === true);
+      if (userEditedRef.current || shouldUpload) {
+        if (!updatedAtRef.current || archived) markLocalChange();
+        await pushLatest();
+        return;
+      }
+      setSyncStatus("synced");
+    } catch (error) {
+      console.error("Cloud sync failed", error);
+      if (storageModeRef.current !== "disabled") storageModeRef.current = "ready";
+      setSyncStatus("error");
+    } finally {
+      syncingRef.current = false;
+      if (syncAgainRef.current) {
+        syncAgainRef.current = false;
+        void reconcile();
+      }
+    }
+  };
+  reconcileRef.current = reconcile;
+
+  useEffect(() => {
+    if (!db) return;
+    let cancelled = false;
+    void enqueueCloudSync(async () => {
+      if (cancelled) return;
+      await reconcileRef.current();
+    });
+    return () => {
+      cancelled = true;
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    };
   }, [db]);
+
+  useEffect(() => {
+    const onOnline = () => {
+      if (storageModeRef.current === "ready") {
+        void enqueueCloudSync(() => reconcileRef.current());
+      }
+    };
+    const onOffline = () => {
+      if (storageModeRef.current === "ready") setSyncStatus("offline");
+    };
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
 
   // --- Dynamic calculations ---
   const calculateProfile = (p: Profile): Profile => {
@@ -359,24 +737,6 @@ export default function App() {
     setExerciseCalories(calculated);
   }, [exerciseName, exerciseDuration, profileWeight]);
 
-  // Handle data updates & save
-  const updateDataAndSave = (updated: AppData) => {
-    setData(updated);
-    localStorage.setItem(KEY, JSON.stringify(updated));
-    if (db) {
-      putRecord(db, {
-        id: `daily:${updated.date}`,
-        name: updated.date,
-        type: 'daily',
-        createdAt: new Date().toISOString(),
-        snapshot: structuredClone(updated)
-      }).then(() => {
-        loadHistoryRecords(db);
-      }).catch(e => {
-        console.error("Auto archive failed inside save", e);
-      });
-    }
-  };
 
   // --- Actions & Forms ---
 
@@ -777,14 +1137,18 @@ export default function App() {
       snapshot: structuredClone(data)
     });
     setRecordName("");
-    loadHistoryRecords(db);
+    await loadHistoryRecords(db);
+    markLocalChange();
+    scheduleCloudSave();
   };
 
   const handleDeleteRecord = async (id: string) => {
     if (!db) return;
     if (window.confirm("確定刪除這組歷史紀錄？")) {
       await deleteRecord(db, id);
-      loadHistoryRecords(db);
+      await loadHistoryRecords(db);
+      markLocalChange();
+      scheduleCloudSave();
     }
   };
 
@@ -793,24 +1157,10 @@ export default function App() {
     const record = records.find(r => r.id === id);
     if (record) {
       if (window.confirm(`載入「${record.name}」為目前資料？目前尚未另存的內容會被取代。`)) {
-        const restored = structuredClone(record.snapshot);
+        const restored = normalizeAppData(structuredClone(record.snapshot));
         restored.date = today();
-        restored.profile = normalizeProfile(restored.profile);
-        restored.weightHistory = normalizeWeightHistory(restored.weightHistory);
-        setData(restored);
-        
-        // Sync states of profile inputs
-        setProfileGender(restored.profile.gender);
-        setProfileAge(restored.profile.age);
-        setProfileHeight(restored.profile.height);
-        setProfileWeight(restored.profile.weight);
-        setProfileActivity(restored.profile.activity);
-        setProfileGoal(restored.profile.goal);
-        setProfileWaterTarget(restored.profile.waterTarget);
-        setProfileTargetWeight(restored.profile.targetWeight);
-
-        localStorage.setItem(KEY, JSON.stringify(restored));
-        loadHistoryRecords(db);
+        syncProfileFields(restored.profile);
+        updateDataAndSave(restored);
       }
     }
   };
@@ -848,21 +1198,9 @@ export default function App() {
       if (!restored.profile || !Array.isArray(restored.foods) || !Array.isArray(restored.exercises)) {
         throw new Error("Invalid format");
       }
-      restored.profile = normalizeProfile(restored.profile);
-      restored.weightHistory = normalizeWeightHistory(restored.weightHistory);
-      setData(restored);
-
-      // Sync form fields
-      setProfileGender(restored.profile.gender);
-      setProfileAge(restored.profile.age);
-      setProfileHeight(restored.profile.height);
-      setProfileWeight(restored.profile.weight);
-      setProfileActivity(restored.profile.activity);
-      setProfileGoal(restored.profile.goal);
-      setProfileWaterTarget(restored.profile.waterTarget);
-      setProfileTargetWeight(restored.profile.targetWeight);
-
-      localStorage.setItem(KEY, JSON.stringify(restored));
+      const restoredData = normalizeAppData(restored);
+      syncProfileFields(restoredData.profile);
+      updateDataAndSave(restoredData);
       setCookieStatus('已載入 Cookie／本機替代資料。');
     } catch {
       setCookieStatus('Cookie 資料格式不正確，無法載入。');
@@ -882,11 +1220,8 @@ export default function App() {
       historyRecords = await getRecords(db);
     }
     const backup = {
-      format: 'shine-body-backup',
-      version: 2,
-      exportedAt: new Date().toISOString(),
-      current: data,
-      records: historyRecords
+      ...buildBackup(data, historyRecords),
+      exportedAt: new Date().toISOString()
     };
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }));
@@ -904,29 +1239,17 @@ export default function App() {
       if (!d.profile || !Array.isArray(d.foods) || !Array.isArray(d.exercises)) {
         throw new Error("格式錯誤");
       }
-      d.profile = normalizeProfile(d.profile);
-      d.weightHistory = normalizeWeightHistory(d.weightHistory);
+      const imported = normalizeAppData(d);
       if (Array.isArray(raw.records) && db) {
         for (const record of raw.records) {
           await putRecord(db, record);
         }
-      }
-      setData(d);
-
-      setProfileGender(d.profile.gender);
-      setProfileAge(d.profile.age);
-      setProfileHeight(d.profile.height);
-      setProfileWeight(d.profile.weight);
-      setProfileActivity(d.profile.activity);
-      setProfileGoal(d.profile.goal);
-      setProfileWaterTarget(d.profile.waterTarget);
-      setProfileTargetWeight(d.profile.targetWeight);
-
-      localStorage.setItem(KEY, JSON.stringify(d));
-      if (db) {
         await loadHistoryRecords(db);
       }
-      alert(`匯入完成${raw.records ? `，包含 ${raw.records.length} 組歷史紀錄` : ''}`);
+      syncProfileFields(imported.profile);
+      updateDataAndSave(imported);
+      const recordCount = Array.isArray(raw.records) ? raw.records.length : 0;
+      alert(`匯入完成${recordCount ? `，包含 ${recordCount} 組歷史紀錄` : ''}。雲端同步啟用時會一併上傳。`);
     } catch {
       alert('備份檔格式不正確');
     } finally {
@@ -938,25 +1261,11 @@ export default function App() {
 
   const handleClearAllData = async () => {
     if (window.confirm('確定清除目前資料及全部歷史紀錄？此動作無法復原。API Key 會保留。')) {
-      if (db) {
-        await clearRecords(db);
-      }
+      if (db) await clearRecords(db);
+      publishRecords([]);
       const reset = structuredClone(defaults);
-      setData(reset);
-      setProfileGender(reset.profile.gender);
-      setProfileAge(reset.profile.age);
-      setProfileHeight(reset.profile.height);
-      setProfileWeight(reset.profile.weight);
-      setProfileActivity(reset.profile.activity);
-      setProfileGoal(reset.profile.goal);
-      setProfileWaterTarget(reset.profile.waterTarget);
-      setProfileTargetWeight(reset.profile.targetWeight);
-
-      localStorage.removeItem(KEY);
-      localStorage.setItem(KEY, JSON.stringify(reset));
-      if (db) {
-        await loadHistoryRecords(db);
-      }
+      syncProfileFields(reset.profile);
+      updateDataAndSave(reset);
     }
   };
 
@@ -1010,7 +1319,18 @@ export default function App() {
             <p>飲食卡路里管家・AI 智能升級版</p>
           </div>
         </div>
-        <div className="tag">健康紀錄只存在此瀏覽器；照片經安全伺服器傳給 Gemini AI 分析</div>
+        <div className="header-meta">
+          <div className="tag">照片經安全伺服器傳給 Gemini AI 分析</div>
+          <p
+            className="sync-pill"
+            data-sync-status={syncStatus}
+            role="status"
+            aria-live="polite"
+            title={SYNC_STATUS_TEXT[syncStatus].title}
+          >
+            {SYNC_STATUS_TEXT[syncStatus].label}
+          </p>
+        </div>
       </header>
 
       <main>
@@ -1647,7 +1967,7 @@ export default function App() {
               </button>
             </div>
             <div className="notice">
-              每次修改都會自動更新當日紀錄；命名快照可另外永久保留。紀錄數量不限制為 10 組，實際容量依瀏覽器而定。
+              每次修改都會自動更新當日紀錄；命名快照可另外保留。雲端同步啟用時，這些紀錄會跟著登入狀態到其他裝置。
             </div>
             <div id="recordCount" className="tag" style={{ marginTop: "12px" }}>
               共 {records.length} 組紀錄
@@ -1720,7 +2040,7 @@ export default function App() {
             </div>
             <div id="cookieStatus" className="status">{cookieStatus}</div>
             <div className="notice">
-              Cookie 會保存目前資料與體重趨勢紀錄，但不包含本機歷史快照；若本機檔案不支援 Cookie 或容量超過限制，會自動改用本機替代儲存。換瀏覽器前仍建議匯出完整 JSON。
+              已登入且設定雲端後，飲食、體重與歷史快照会自動同步；離線時仍寫入此瀏覽器，連線後以較新的時間為準。匯入的 JSON 備份也會上傳。Cookie 只保留目前資料，不含歷史快照。
             </div>
           </section>
         </div>

@@ -18,6 +18,9 @@
     },
     "api/health.ts": {
       "maxDuration": 10
+    },
+    "api/data.ts": {
+      "maxDuration": 10
     }
   }
 }

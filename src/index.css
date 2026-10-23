@@ -58,6 +58,56 @@ header p {
   font-size: 13px;
 }
 
+.header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.sync-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.sync-pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.sync-pill[data-sync-status="loading"],
+.sync-pill[data-sync-status="saving"] {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.sync-pill[data-sync-status="offline"] {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.sync-pill[data-sync-status="error"] {
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.sync-pill[data-sync-status="local"] {
+  background: #fdf2f8;
+  color: #be185d;
+}
+
 main {
   max-width: 1050px;
   margin: auto;
