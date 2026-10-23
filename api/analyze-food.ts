@@ -1,5 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
-import { analyzeFoodImage } from "../lib/analyzeFoodImage.js";
+import { analyzeFoodImage, MISSING_NVIDIA_KEY_ERROR } from "../lib/analyzeFoodImage.js";
 
 
 export default async function handler(req: any, res: any) {
@@ -10,10 +9,9 @@ export default async function handler(req: any, res: any) {
 
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
     const nvidiaApiKey = process.env.NVIDIA_API_KEY || process.env.NVIDIA_DEEPSEEK_API_KEY;
-    if (!apiKey && !nvidiaApiKey) {
-      return res.status(500).json({ error: "伺服器尚未設定 NVIDIA API key 或 GEMINI_API_KEY。" });
+    if (!nvidiaApiKey) {
+      return res.status(500).json({ error: MISSING_NVIDIA_KEY_ERROR });
     }
 
 
@@ -26,20 +24,10 @@ export default async function handler(req: any, res: any) {
     }
 
 
-    const ai = apiKey
-      ? new GoogleGenAI({
-          apiKey,
-          httpOptions: {
-            headers: { "User-Agent": "shine-body-ai-vercel" },
-            timeout: 7_000
-          }
-        })
-      : null;
-    const result = await analyzeFoodImage(ai, image, mimeType);
+    const result = await analyzeFoodImage(image, mimeType);
     return res.status(200).json(result);
   } catch (error: any) {
     console.error("AI image analysis error:", error);
     return res.status(500).json({ error: `AI 照片分析失敗: ${error?.message || error}` });
   }
 }
-

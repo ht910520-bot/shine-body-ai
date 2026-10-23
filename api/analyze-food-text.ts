@@ -1,6 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
-// Vercel's native ESM runtime needs the emitted .js extension for local imports.
-import { analyzeFoodText } from "../lib/analyzeFoodText.js";
+import { analyzeFoodText, MISSING_NVIDIA_KEY_ERROR } from "../lib/analyzeFoodText.js";
 
 
 export default async function handler(req: any, res: any) {
@@ -11,10 +9,9 @@ export default async function handler(req: any, res: any) {
 
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
     const nvidiaApiKey = process.env.NVIDIA_API_KEY || process.env.NVIDIA_DEEPSEEK_API_KEY;
-    if (!apiKey && !nvidiaApiKey) {
-      return res.status(500).json({ error: "伺服器尚未設定 NVIDIA_API_KEY 或 GEMINI_API_KEY。" });
+    if (!nvidiaApiKey) {
+      return res.status(500).json({ error: MISSING_NVIDIA_KEY_ERROR });
     }
 
 
@@ -27,20 +24,10 @@ export default async function handler(req: any, res: any) {
     }
 
 
-    const ai = apiKey
-      ? new GoogleGenAI({
-          apiKey,
-          httpOptions: {
-            headers: { "User-Agent": "shine-body-ai-vercel" },
-            timeout: 8_000
-          }
-        })
-      : null;
-    const result = await analyzeFoodText(ai, text, followUpAnswer, previous);
+    const result = await analyzeFoodText(text, followUpAnswer, previous);
     return res.status(200).json(result);
   } catch (error: any) {
     console.error("AI text food analysis error:", error);
     return res.status(500).json({ error: `AI 飲食查詢失敗: ${error?.message || error}` });
   }
 }
-
