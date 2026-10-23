@@ -937,7 +937,7 @@ export default function App() {
     setFoodCarbs(String(divide(aiFood.carbs)));
     setFoodFat(String(divide(aiFood.fat)));
     
-    setAiStatus(statusMessage || `Gemini AI 分析完成：整份共 ${Math.round(Number(aiFood.calories) || 0)} kcal${people > 1 ? `，除以 ${people} 人後每人約 ${Math.round(divide(aiFood.calories))} kcal` : '，目前未分食'}。${aiFood.description || '請確認數字後再新增。'}`);
+    setAiStatus(statusMessage || `AI 分析完成：整份共 ${Math.round(Number(aiFood.calories) || 0)} kcal${people > 1 ? `，除以 ${people} 人後每人約 ${Math.round(divide(aiFood.calories))} kcal` : '，目前未分食'}。${aiFood.description || '請確認數字後再新增。'}`);
   };
 
   useEffect(() => {
@@ -953,7 +953,7 @@ export default function App() {
     }
     
     setIsAnalyzing(true);
-    setAiStatus("NVIDIA Vision 正在透過安全伺服器分析（失敗時才回退 Gemini）…");
+    setAiStatus("NVIDIA Vision 正在透過安全伺服器分析…");
 
     try {
       const response = await fetch("/api/analyze-food", {
@@ -989,7 +989,8 @@ export default function App() {
 
     } catch (error: any) {
       console.error(error);
-      setAiStatus(`分析失敗：${error.message || error}。可稍後再試或手動輸入。`);
+      const detail = String(error?.message || error).replace(/[。．.\s]+$/u, "");
+      setAiStatus(`分析失敗：${detail}。可稍後再試或手動輸入。`);
     } finally {
       setIsAnalyzing(false);
     }
@@ -1007,7 +1008,7 @@ export default function App() {
     }
 
     setIsAnalyzingText(true);
-    setAiStatus("NVIDIA 文字模型分析中（失敗才回退 Gemini）…");
+    setAiStatus("NVIDIA 文字模型分析中…");
     try {
       const response = await fetch("/api/analyze-food-text", {
         method: "POST",
@@ -1043,7 +1044,8 @@ export default function App() {
       );
     } catch (error: any) {
       console.error(error);
-      setAiStatus(`查詢失敗：${error.message || error}。可手動輸入熱量。`);
+      const detail = String(error?.message || error).replace(/[。．.\s]+$/u, "");
+      setAiStatus(`查詢失敗：${detail}。可手動輸入熱量。`);
     } finally {
       setIsAnalyzingText(false);
     }
@@ -1362,7 +1364,7 @@ export default function App() {
           </div>
         </div>
         <div className="header-meta">
-          <div className="tag">照片經安全伺服器傳給 Gemini AI 分析</div>
+          <div className="tag">照片經安全伺服器傳給 NVIDIA 分析</div>
           <p
             className="sync-pill"
             data-sync-status={syncStatus}
@@ -1701,7 +1703,7 @@ export default function App() {
             <div className="ai-box" style={{ marginBottom: "12px" }}>
               <div className="ai-heading"><img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg?v=2" alt="珊珊熊熊" /><b>💬 自然語言查詢熱量</b></div>
               <div className="notice" style={{ marginTop: "6px" }}>
-                直接輸入「711 阜杭豆漿飯糰」或「雞胸肉便當」；目前優先使用 NVIDIA API 估算，資訊不足時再向你確認。
+                直接輸入「711 阜杭豆漿飯糰」或「雞胸肉便當」；使用 NVIDIA API 估算，資訊不足時再向你確認。
               </div>
               <label style={{ display: "block", marginTop: "9px" }}>
                 餐點描述
@@ -1734,14 +1736,14 @@ export default function App() {
                   disabled={isAnalyzingText || !foodText.trim() || (textNeedsConfirmation && !foodFollowUpAnswer.trim())}
                   onClick={handleAnalyzeFoodText}
                 >
-                  {isAnalyzingText ? "搜尋中…" : textNeedsConfirmation ? "送出補充回答" : "查詢熱量"}
+                  {isAnalyzingText ? "查詢中…" : textNeedsConfirmation ? "送出補充回答" : "查詢熱量"}
                 </button>
               </div>
             </div>
             <div className="ai-box">
               <div className="ai-heading"><img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg?v=2" alt="珊珊熊熊" /><b>✨ AI 影像辨識</b></div>
               <div className="fields" style={{ marginTop: "9px" }}>
-                <div className="notice">照片分析服務：NVIDIA Vision（主要），Gemini（備援）。API key 只在伺服器端維護。</div>
+                <div className="notice">照片分析服務：NVIDIA Vision。API key 只在伺服器端維護。</div>
                 <label>
                   選擇或拍攝食物照片
                   <input

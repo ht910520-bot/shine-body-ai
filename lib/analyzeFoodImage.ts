@@ -1,54 +1,28 @@
-import { GoogleGenAI, Type } from "@google/genai";
-
-
-export const foodImageResponseSchema = {
-  type: Type.OBJECT,
-  properties: {
-    items: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          name: { type: Type.STRING, description: "食物或配菜名稱" },
-          calories: { type: Type.INTEGER, description: "估算熱量 kcal" },
-          protein: { type: Type.NUMBER, description: "估算蛋白質 g" },
-          carbs: { type: Type.NUMBER, description: "估算碳水化合物 g" },
-          fat: { type: Type.NUMBER, description: "估算脂肪 g" }
-        },
-        required: ["name", "calories", "protein", "carbs", "fat"]
-      }
-    },
-    totalCalories: { type: Type.INTEGER, description: "總熱量估算 kcal" },
-    confidence: { type: Type.STRING, description: "估算信心程度 high、medium 或 low" },
-    notes: { type: Type.STRING, description: "分析備註或飲食建議" },
-    food: {
-      type: Type.OBJECT,
-      properties: {
-        name: { type: Type.STRING, description: "主餐點名稱" },
-        calories: { type: Type.INTEGER, description: "總熱量 kcal" },
-        protein: { type: Type.NUMBER, description: "總蛋白質 g" },
-        carbs: { type: Type.NUMBER, description: "總碳水 g" },
-        fat: { type: Type.NUMBER, description: "總脂肪 g" },
-        description: { type: Type.STRING, description: "整體分析說明與份量假設" }
-      },
-      required: ["name", "calories", "protein", "carbs", "fat", "description"]
-    }
-  },
-  required: ["items", "totalCalories", "confidence", "notes", "food"]
-};
-
-
 const NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions";
-// Keep image analysis predictable on serverless runtimes. Models are tried in
-// order and the first valid result ends the chain. The Nano VL model is the
-// fastest primary; the two Llama 3.2 vision models are bounded fallbacks.
-const DEFAULT_NVIDIA_VISION_MODELS = [
-  "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
-  "meta/llama-3.2-11b-vision-instruct",
+export const MISSING_NVIDIA_KEY_ERROR = "伺服器尚未設定 NVIDIA_API_KEY 或 NVIDIA_DEEPSEEK_API_KEY。";
+// Retired nvidia/llama-3.1-nemotron-nano-vl-8b-v1 returns HTTP 410, and
+// meta/llama-3.2-11b-vision-instruct regularly exceeds the function limit.
+// MiniMax is the measured working vision model; Muse Glimmer and Llama 3.2
+// 90B are the fallbacks.
+export const DEFAULT_NVIDIA_VISION_MODELS = [
+  "minimaxai/minimax-m3.1-flash",
+  "meta/muse-glimmer-30b",
   "meta/llama-3.2-90b-vision-instruct"
 ];
-const DEFAULT_NVIDIA_TIMEOUT_MS = 15_000;
-const DEFAULT_NVIDIA_TOTAL_TIMEOUT_MS = 40_000;
+export const DEFAULT_NVIDIA_VISION_TIMEOUT_MS = 45_000;
+export const DEFAULT_NVIDIA_VISION_TOTAL_TIMEOUT_MS = 55_000;
+// MiniMax-M3.1-Flash spends the budget on reasoning before it writes content.
+// max_tokens 700 returned finish_reason=length with empty content; 3000
+// finished. reasoning_effort is left unset: NVIDIA documents it inside the
+// chat template, a rejected field would fail the only proven request, and the
+// measured successful body did not send it.
+export const DEFAULT_NVIDIA_VISION_MAX_TOKENS = 3_000;
+const MIN_NVIDIA_VISION_TIMEOUT_MS = 1_000;
+const MAX_NVIDIA_VISION_TIMEOUT_MS = 50_000;
+const MIN_NVIDIA_VISION_TOTAL_TIMEOUT_MS = 10_000;
+const MAX_NVIDIA_VISION_TOTAL_TIMEOUT_MS = 55_000;
+const MIN_NVIDIA_VISION_MAX_TOKENS = 256;
+const MAX_NVIDIA_VISION_MAX_TOKENS = 8_192;
 
 
 function parseJson(text: string) {
@@ -113,6 +87,53 @@ function parseModelList(value?: string) {
 }
 
 
+function clampNumber(value: string | undefined, fallback: number, min: number, max: number) {
+  const configured = Number(value);
+  if (!Number.isFinite(configured)) return fallback;
+  return Math.min(Math.max(configured, min), max);
+}
+
+
+export function visionRuntimeConfig(env: NodeJS.ProcessEnv = process.env) {
+  const primaryModel = env.NVIDIA_VISION_MODEL || DEFAULT_NVIDIA_VISION_MODELS[0];
+  const configuredModels = parseModelList(env.NVIDIA_VISION_MODELS);
+  const configuredFallbackModels = [
+    ...parseModelList(env.NVIDIA_VISION_FALLBACK_MODELS),
+    ...parseModelList(env.NVIDIA_VISION_FALLBACK_MODEL)
+  ];
+  const models = configuredModels.length
+    ? [...new Set(configuredModels)]
+    : [...new Set([
+      primaryModel,
+      ...configuredFallbackModels,
+      ...(configuredFallbackModels.length
+        ? []
+        : DEFAULT_NVIDIA_VISION_MODELS.filter((model) => model !== primaryModel))
+    ])];
+  return {
+    models,
+    timeoutMs: clampNumber(
+      env.NVIDIA_VISION_TIMEOUT_MS,
+      DEFAULT_NVIDIA_VISION_TIMEOUT_MS,
+      MIN_NVIDIA_VISION_TIMEOUT_MS,
+      MAX_NVIDIA_VISION_TIMEOUT_MS
+    ),
+    totalTimeoutMs: clampNumber(
+      env.NVIDIA_VISION_TOTAL_TIMEOUT_MS,
+      DEFAULT_NVIDIA_VISION_TOTAL_TIMEOUT_MS,
+      MIN_NVIDIA_VISION_TOTAL_TIMEOUT_MS,
+      MAX_NVIDIA_VISION_TOTAL_TIMEOUT_MS
+    ),
+    maxTokens: Math.round(clampNumber(
+      env.NVIDIA_VISION_MAX_TOKENS,
+      DEFAULT_NVIDIA_VISION_MAX_TOKENS,
+      MIN_NVIDIA_VISION_MAX_TOKENS,
+      MAX_NVIDIA_VISION_MAX_TOKENS
+    ))
+  };
+}
+
+
 // NVIDIA's hosted vision models officially expect English instructions for
 // image+text requests. Keep the prompt in English, but ask for Traditional
 // Chinese display strings so the result still matches the app UI. Avoid a JSON
@@ -166,36 +187,32 @@ function normalizeResult(parsed: any) {
 }
 
 
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  return String(error);
+}
+
+
+function isTimeout(error: unknown) {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+}
+
+
+function warnOnEmptyOrTruncated(model: string, finishReason: unknown, content: string, usage: unknown) {
+  if (content && finishReason !== "length") return;
+  console.warn(
+    `NVIDIA Vision model ${model} returned empty or truncated content: finish_reason=${finishReason ?? "unknown"} usage=${JSON.stringify(usage ?? null)}`
+  );
+}
+
+
 async function analyzeWithNvidia(image: string, mimeType?: string) {
   const apiKey = process.env.NVIDIA_API_KEY || process.env.NVIDIA_DEEPSEEK_API_KEY;
-  if (!apiKey) throw new Error("未設定 NVIDIA API key。");
+  if (!apiKey) throw new Error(MISSING_NVIDIA_KEY_ERROR);
 
-
-  const primaryModel = process.env.NVIDIA_VISION_MODEL || DEFAULT_NVIDIA_VISION_MODELS[0];
-  const configuredModels = parseModelList(process.env.NVIDIA_VISION_MODELS);
-  const configuredFallbackModels = [
-    ...parseModelList(process.env.NVIDIA_VISION_FALLBACK_MODELS),
-    ...parseModelList(process.env.NVIDIA_VISION_FALLBACK_MODEL)
-  ];
-  const models = configuredModels.length
-    ? [...new Set(configuredModels)]
-    : [...new Set([
-      primaryModel,
-      ...configuredFallbackModels,
-      ...(configuredFallbackModels.length
-        ? []
-        : DEFAULT_NVIDIA_VISION_MODELS.filter((model) => model !== primaryModel))
-    ])];
-  const configuredTimeout = Number(process.env.NVIDIA_VISION_TIMEOUT_MS);
-  const timeoutMs = Number.isFinite(configuredTimeout)
-    ? Math.min(Math.max(configuredTimeout, 1_000), 25_000)
-    : DEFAULT_NVIDIA_TIMEOUT_MS;
-  const configuredTotalTimeout = Number(process.env.NVIDIA_VISION_TOTAL_TIMEOUT_MS);
-  const totalTimeoutMs = Number.isFinite(configuredTotalTimeout)
-    ? Math.min(Math.max(configuredTotalTimeout, 10_000), 50_000)
-    : DEFAULT_NVIDIA_TOTAL_TIMEOUT_MS;
+  const { models, timeoutMs, totalTimeoutMs, maxTokens } = visionRuntimeConfig();
   const startedAt = Date.now();
-  let lastError: any;
+  let lastError: Error | undefined;
   for (const model of models) {
     const remainingMs = totalTimeoutMs - (Date.now() - startedAt);
     if (remainingMs <= 0) break;
@@ -203,37 +220,54 @@ async function analyzeWithNvidia(image: string, mimeType?: string) {
     try {
       const isQwen = model === "qwen/qwen3.5-397b-a17b";
       const response = await fetch(NVIDIA_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "User-Agent": "shine-body-ai-vercel"
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "image_url", image_url: { url: `data:${safeMimeType(mimeType)};base64,${image}` } },
-          { type: "text", text: imagePrompt }
-        ]
-      }],
-      temperature: isQwen ? 0.2 : 0.1,
-      top_p: isQwen ? 0.8 : 1,
-      max_tokens: 700,
-      stream: false,
-      ...(isQwen ? { chat_template_kwargs: { enable_thinking: false } } : {})
-    }),
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": "shine-body-ai-vercel"
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "image_url", image_url: { url: `data:${safeMimeType(mimeType)};base64,${image}` } },
+              { type: "text", text: imagePrompt }
+            ]
+          }],
+          temperature: isQwen ? 0.2 : 0.1,
+          top_p: isQwen ? 0.8 : 1,
+          max_tokens: maxTokens,
+          stream: false,
+          ...(isQwen ? { chat_template_kwargs: { enable_thinking: false } } : {})
+        }),
         signal: AbortSignal.timeout(requestTimeoutMs)
       });
       const payload: any = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(`NVIDIA Vision HTTP ${response.status}: ${payload?.error?.message || payload?.detail || "請求失敗"}`);
       }
-      const content = messageText(payload?.choices?.[0]?.message?.content);
-      if (!content) throw new Error("NVIDIA Vision 未回傳文字內容。");
-      const parsed = parseJson(content);
+      const choice = payload?.choices?.[0];
+      const finishReason = choice?.finish_reason;
+      const content = messageText(choice?.message?.content);
+      warnOnEmptyOrTruncated(model, finishReason, content, payload?.usage);
+      if (!content) {
+        throw new Error(
+          finishReason === "length"
+            ? `NVIDIA Vision 模型 ${model} 未回傳文字內容（finish_reason=length，輸出長度用盡）。`
+            : `NVIDIA Vision 模型 ${model} 未回傳文字內容（finish_reason=${finishReason || "unknown"}）。`
+        );
+      }
+      let parsed: any;
+      try {
+        parsed = parseJson(content);
+      } catch (error) {
+        if (finishReason === "length") {
+          throw new Error(`NVIDIA Vision 模型 ${model} 回傳被截斷（finish_reason=length）。${errorMessage(error)}`);
+        }
+        throw error;
+      }
       const normalized = normalizeResult(parsed);
       return {
         ...normalized,
@@ -241,59 +275,20 @@ async function analyzeWithNvidia(image: string, mimeType?: string) {
         notes: `${normalized.notes}${normalized.notes ? " " : ""}照片熱量為 NVIDIA 模型估算，送出前請確認份量。`
       };
     } catch (error) {
-      lastError = error;
-      console.warn(`NVIDIA Vision model ${model} failed; trying next model.`, error);
+      const message = errorMessage(error);
+      const reported = isTimeout(error)
+        ? `NVIDIA Vision 模型 ${model} 逾時（${requestTimeoutMs}ms）。`
+        : message.startsWith("NVIDIA")
+          ? message
+          : `NVIDIA Vision 模型 ${model} 失敗：${message}`;
+      lastError = new Error(reported);
+      console.warn(`NVIDIA Vision model ${model} failed; trying next model.`, reported);
     }
   }
   throw lastError || new Error("所有 NVIDIA Vision 模型皆無法使用。");
 }
 
 
-async function analyzeWithGemini(ai: GoogleGenAI, image: string, mimeType?: string) {
-  const imagePart = { inlineData: { mimeType: safeMimeType(mimeType), data: image } };
-  const responseModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
-  let response: any;
-  let usedModel = responseModels[0];
-  let lastError: any;
-  for (const model of responseModels) {
-    try {
-      usedModel = model;
-      response = await ai.models.generateContent({
-        model,
-        contents: [{ text: imagePrompt }, imagePart],
-        config: { responseMimeType: "application/json", responseSchema: foodImageResponseSchema }
-      });
-      break;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  if (!response) throw lastError || new Error("所有 Gemini 模型皆無法使用。");
-  if (!response.text) throw new Error("Gemini 未回傳任何文字內容。");
-  const parsed = parseJson(response.text);
-  const normalized = normalizeResult(parsed);
-  return {
-    ...normalized,
-    provider: `Gemini AI (${usedModel})`,
-  };
+export async function analyzeFoodImage(image: string, mimeType?: string) {
+  return analyzeWithNvidia(image, mimeType);
 }
-
-
-export async function analyzeFoodImage(
-  ai: GoogleGenAI | null,
-  image: string,
-  mimeType?: string
-) {
-  const hasNvidiaKey = Boolean(process.env.NVIDIA_API_KEY || process.env.NVIDIA_DEEPSEEK_API_KEY);
-  if (hasNvidiaKey) {
-    try {
-      return await analyzeWithNvidia(image, mimeType);
-    } catch (error) {
-      console.warn("NVIDIA Vision analysis failed; trying Gemini fallback:", error);
-      if (!ai) throw error;
-    }
-  }
-  if (!ai) throw new Error("伺服器尚未設定 NVIDIA API key 或 GEMINI_API_KEY。");
-  return analyzeWithGemini(ai, image, mimeType);
-}
-
