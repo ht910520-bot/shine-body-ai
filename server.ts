@@ -3,6 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
+import { handleUserData } from "./lib/userDataApi.js";
 
 dotenv.config();
 
@@ -31,6 +32,10 @@ async function startServer() {
 
   // Set limits for base64 food image payloads
   app.use(express.json({ limit: "15mb" }));
+
+  app.all("/api/data", (req, res) => {
+    void handleUserData(req, res);
+  });
 
   // AI Food Analysis API Endpoint
   const analysisRequests = new Map<string, { count: number; resetAt: number }>();
