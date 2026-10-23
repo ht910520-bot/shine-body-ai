@@ -5,6 +5,7 @@ import {
   CloudStorageNotConfiguredError,
   UpstashRedisStorage,
   createDataStorage,
+  upstashRestCredentials,
   type DataStorage,
   type StoredDocument
 } from "./storage.ts";
@@ -53,7 +54,9 @@ const originalEnv = {
   APP_ACCESS_CODE: process.env.APP_ACCESS_CODE,
   DATA_STORAGE_ADAPTER: process.env.DATA_STORAGE_ADAPTER,
   UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
-  UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN
+  UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
+  KV_REST_API_URL: process.env.KV_REST_API_URL,
+  KV_REST_API_TOKEN: process.env.KV_REST_API_TOKEN
 };
 
 function restoreEnv() {
@@ -138,6 +141,8 @@ async function testApi() {
   delete process.env.DATA_STORAGE_ADAPTER;
   delete process.env.UPSTASH_REDIS_REST_URL;
   delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  delete process.env.KV_REST_API_URL;
+  delete process.env.KV_REST_API_TOKEN;
 
   const unauthorized = mockResponse();
   await handleUserData({ method: "GET", headers: {} }, unauthorized);
@@ -152,6 +157,14 @@ async function testApi() {
   await handleUserData({ method: "GET", headers: { cookie: cookieFor("sync-test-code") } }, unconfigured);
   assert.equal(unconfigured.statusCode, 503);
   assert.equal(unconfigured.body.error, CLOUD_STORAGE_NOT_CONFIGURED);
+
+  process.env.KV_REST_API_URL = "http://127.0.0.1:9";
+  process.env.KV_REST_API_TOKEN = "marketplace-token";
+  const autoSelected = mockResponse();
+  await handleUserData({ method: "GET", headers: { cookie: cookieFor("sync-test-code") } }, autoSelected);
+  assert.equal(autoSelected.statusCode, 500);
+  delete process.env.KV_REST_API_URL;
+  delete process.env.KV_REST_API_TOKEN;
 
   process.env.DATA_STORAGE_ADAPTER = "upstash";
   const missingToken = mockResponse();
@@ -211,6 +224,43 @@ async function testApi() {
 async function testUpstashAdapter() {
   assert.throws(() => createDataStorage({} as NodeJS.ProcessEnv), CloudStorageNotConfiguredError);
   assert.throws(() => createDataStorage({ DATA_STORAGE_ADAPTER: "upstash" } as NodeJS.ProcessEnv), CloudStorageNotConfiguredError);
+  assert.throws(() => createDataStorage({ KV_REST_API_URL: "https://kv.example" } as NodeJS.ProcessEnv), CloudStorageNotConfiguredError);
+  assert.throws(() => createDataStorage({
+    DATA_STORAGE_ADAPTER: "other",
+    KV_REST_API_URL: "https://kv.example",
+    KV_REST_API_TOKEN: "kv-token"
+  } as NodeJS.ProcessEnv), CloudStorageNotConfiguredError);
+
+  assert.equal(upstashRestCredentials({} as NodeJS.ProcessEnv), null);
+  assert.deepEqual(upstashRestCredentials({
+    KV_REST_API_URL: " https://kv.example ",
+    KV_REST_API_TOKEN: " kv-token "
+  } as NodeJS.ProcessEnv), { url: "https://kv.example", token: "kv-token" });
+  assert.deepEqual(upstashRestCredentials({
+    UPSTASH_REDIS_REST_URL: "https://upstash.example",
+    UPSTASH_REDIS_REST_TOKEN: "upstash-token",
+    KV_REST_API_URL: "https://kv.example",
+    KV_REST_API_TOKEN: "kv-token"
+  } as NodeJS.ProcessEnv), { url: "https://upstash.example", token: "upstash-token" });
+  assert.deepEqual(upstashRestCredentials({
+    UPSTASH_REDIS_REST_URL: "https://upstash.example",
+    KV_REST_API_URL: "https://kv.example",
+    KV_REST_API_TOKEN: "kv-token"
+  } as NodeJS.ProcessEnv), { url: "https://kv.example", token: "kv-token" });
+
+  assert.ok(createDataStorage({
+    KV_REST_API_URL: "https://kv.example",
+    KV_REST_API_TOKEN: "kv-token"
+  } as NodeJS.ProcessEnv) instanceof UpstashRedisStorage);
+  assert.ok(createDataStorage({
+    UPSTASH_REDIS_REST_URL: "https://upstash.example",
+    UPSTASH_REDIS_REST_TOKEN: "upstash-token"
+  } as NodeJS.ProcessEnv) instanceof UpstashRedisStorage);
+  assert.ok(createDataStorage({
+    DATA_STORAGE_ADAPTER: "upstash",
+    KV_REST_API_URL: "https://kv.example",
+    KV_REST_API_TOKEN: "kv-token"
+  } as NodeJS.ProcessEnv) instanceof UpstashRedisStorage);
 
   const calls: Array<{ url: string; authorization: string; body: string[] }> = [];
   let stored: string | null = null;

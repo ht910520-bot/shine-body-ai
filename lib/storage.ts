@@ -131,13 +131,24 @@ export class UpstashRedisStorage implements DataStorage {
   }
 }
 
+function credentialPair(url: string | undefined, token: string | undefined) {
+  const trimmedUrl = url?.trim() || "";
+  const trimmedToken = token?.trim() || "";
+  if (!trimmedUrl || !trimmedToken) return null;
+  return { url: trimmedUrl, token: trimmedToken };
+}
+
+// Vercel Marketplace injects KV_REST_API_*. UPSTASH_REDIS_REST_* is the same
+// Upstash REST API under the names used outside that integration.
+export function upstashRestCredentials(env: NodeJS.ProcessEnv): { url: string; token: string } | null {
+  return credentialPair(env.UPSTASH_REDIS_REST_URL, env.UPSTASH_REDIS_REST_TOKEN)
+    || credentialPair(env.KV_REST_API_URL, env.KV_REST_API_TOKEN);
+}
+
 export function createDataStorage(env: NodeJS.ProcessEnv = process.env): DataStorage {
   const adapter = (env.DATA_STORAGE_ADAPTER || "").trim().toLowerCase();
-  if (adapter === "upstash") {
-    const url = env.UPSTASH_REDIS_REST_URL?.trim() || "";
-    const token = env.UPSTASH_REDIS_REST_TOKEN?.trim() || "";
-    if (!url || !token) throw new CloudStorageNotConfiguredError();
-    return new UpstashRedisStorage(url, token);
-  }
+  const credentials = upstashRestCredentials(env);
+  const useUpstash = adapter === "upstash" || (adapter === "" && credentials !== null);
+  if (useUpstash && credentials) return new UpstashRedisStorage(credentials.url, credentials.token);
   throw new CloudStorageNotConfiguredError();
 }

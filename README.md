@@ -34,11 +34,14 @@ stores one JSON document per deployment behind `GET`/`PUT /api/data`. Without
 the storage settings below, the app keeps using this browser and shows
 「僅本機」.
 
-Set these on the host (Vercel or Railway). Do not commit the token.
-
-- `DATA_STORAGE_ADAPTER=upstash`
-- `UPSTASH_REDIS_REST_URL`
-- `UPSTASH_REDIS_REST_TOKEN`
+Sync turns on when either Upstash REST credential pair is present, so
+`DATA_STORAGE_ADAPTER` is optional. Set `DATA_STORAGE_ADAPTER=upstash` only
+to force that adapter. The Vercel Marketplace Upstash integration injects
+`KV_REST_API_URL` and `KV_REST_API_TOKEN`. The same adapter also reads
+`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. When both pairs are
+set, the `UPSTASH_REDIS_REST_*` pair is used. A URL without its matching
+token does not enable sync. Leave every storage variable unset to keep
+records on this device; the app then shows 「僅本機」. Do not commit the token.
 
 Conflicts keep the document with the newer `updatedAt`. An empty cloud account
 imports existing on-device data once. Importing a JSON backup uploads it too.
