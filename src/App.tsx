@@ -989,7 +989,8 @@ export default function App() {
 
     } catch (error: any) {
       console.error(error);
-      setAiStatus(`分析失敗：${error.message || error}。可稍後再試或手動輸入。`);
+      const detail = String(error?.message || error).replace(/[。．.\s]+$/u, "");
+      setAiStatus(`分析失敗：${detail}。可稍後再試或手動輸入。`);
     } finally {
       setIsAnalyzing(false);
     }
@@ -1043,7 +1044,8 @@ export default function App() {
       );
     } catch (error: any) {
       console.error(error);
-      setAiStatus(`查詢失敗：${error.message || error}。可手動輸入熱量。`);
+      const detail = String(error?.message || error).replace(/[。．.\s]+$/u, "");
+      setAiStatus(`查詢失敗：${detail}。可手動輸入熱量。`);
     } finally {
       setIsAnalyzingText(false);
     }
