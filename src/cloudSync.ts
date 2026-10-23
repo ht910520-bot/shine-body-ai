@@ -3,6 +3,7 @@ export type SyncStatus = "loading" | "synced" | "saving" | "offline" | "error" |
 export const SYNC_META_KEY = "shine_body_sync_meta_v1";
 export const CLOUD_STORAGE_NOT_CONFIGURED = "cloud storage not configured";
 export const CLOUD_SAVE_DEBOUNCE_MS = 800;
+export const CLOUD_REFRESH_INTERVAL_MS = 45_000;
 
 export interface CloudDocument<T> {
   updatedAt: string;
@@ -18,7 +19,67 @@ export type CloudResult<T> =
   | { type: "unauthorized" }
   | { type: "error" };
 
-export type SyncAction = "upload" | "download" | "keep";
+export type SyncPlan = "apply-cloud" | "upload-local" | "merge" | "keep";
+
+export function isNewerTimestamp(candidate: string | null, baseline: string | null) {
+  if (!candidate) return false;
+  const candidateTime = Date.parse(candidate);
+  if (Number.isNaN(candidateTime)) return false;
+  if (!baseline) return true;
+  const baselineTime = Date.parse(baseline);
+  if (Number.isNaN(baselineTime)) return true;
+  return candidateTime > baselineTime;
+}
+
+export function mergeWeightHistory<T extends { date: string }>(
+  localPoints: T[],
+  cloudPoints: T[],
+  prefer: "local" | "cloud"
+) {
+  const byDate = new Map<string, T>();
+  const base = prefer === "cloud" ? localPoints : cloudPoints;
+  const override = prefer === "cloud" ? cloudPoints : localPoints;
+  for (const point of base) {
+    if (point?.date) byDate.set(point.date, point);
+  }
+  for (const point of override) {
+    if (point?.date) byDate.set(point.date, point);
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export function mergeRecordsById<T extends { id: string }>(localRecords: T[], cloudRecords: T[]) {
+  const byId = new Map<string, T>();
+  for (const record of cloudRecords) {
+    if (record?.id) byId.set(record.id, record);
+  }
+  for (const record of localRecords) {
+    if (record?.id && !byId.has(record.id)) byId.set(record.id, record);
+  }
+  return [...byId.values()];
+}
+
+export function mergeCloudPayload<
+  TCurrent extends { weightHistory?: Array<{ date: string }> },
+  TRecord extends { id: string }
+>(
+  local: { current: TCurrent; records: TRecord[] },
+  cloud: { current: TCurrent; records: TRecord[] }
+): { current: TCurrent; records: TRecord[] } {
+  const weightHistory = mergeWeightHistory(
+    local.current.weightHistory || [],
+    cloud.current.weightHistory || [],
+    "cloud"
+  );
+  return {
+    current: {
+      ...cloud.current,
+      ...local.current,
+      weightHistory: weightHistory as TCurrent["weightHistory"]
+    },
+    records: mergeRecordsById(local.records || [], cloud.records || [])
+  };
+}
 
 export function readLocalUpdatedAt(): string | null {
   try {
@@ -36,24 +97,21 @@ export function writeLocalUpdatedAt(updatedAt: string) {
   localStorage.setItem(SYNC_META_KEY, JSON.stringify({ updatedAt: new Date(updatedAt).toISOString() }));
 }
 
-export function decideSyncAction(input: {
+export function planSync(input: {
   cloud: "empty" | "present";
   localUpdatedAt: string | null;
   cloudUpdatedAt: string | null;
   hasPersistedLocal: boolean;
-  userEdited: boolean;
-  localDate?: string;
-  cloudDate?: string;
-}): SyncAction {
-  if (input.userEdited) return "upload";
-  if (input.cloud === "empty") return input.hasPersistedLocal ? "upload" : "keep";
-  if (!input.localUpdatedAt) return "download";
-
-  const localTime = Date.parse(input.localUpdatedAt);
-  const cloudTime = Date.parse(input.cloudUpdatedAt || "");
-  if (Number.isNaN(cloudTime) || localTime > cloudTime) return "upload";
-  if (cloudTime > localTime) return "download";
-  if (input.localDate && input.cloudDate && input.localDate > input.cloudDate) return "upload";
+  dirty: boolean;
+}): SyncPlan {
+  if (input.cloud === "empty") {
+    return input.hasPersistedLocal || input.dirty ? "upload-local" : "keep";
+  }
+  const cloudNewer = isNewerTimestamp(input.cloudUpdatedAt, input.localUpdatedAt);
+  const localNewer = isNewerTimestamp(input.localUpdatedAt, input.cloudUpdatedAt);
+  if (input.dirty && cloudNewer) return "merge";
+  if (cloudNewer) return "apply-cloud";
+  if (input.dirty || localNewer) return "upload-local";
   return "keep";
 }
 
@@ -92,7 +150,8 @@ export async function loadCloudDocument<T>(): Promise<CloudResult<T>> {
     const response = await fetch("/api/data", {
       method: "GET",
       cache: "no-store",
-      credentials: "same-origin"
+      credentials: "same-origin",
+      headers: { "Cache-Control": "no-cache", Pragma: "no-cache" }
     });
     return interpretCloudResponse<T>(response);
   } catch {
