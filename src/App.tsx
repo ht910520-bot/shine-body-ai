@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
+  CLOUD_REFRESH_INTERVAL_MS,
   CLOUD_SAVE_DEBOUNCE_MS,
-  decideSyncAction,
   loadCloudDocument,
+  mergeCloudPayload,
+  planSync,
   readLocalUpdatedAt,
   saveCloudDocument,
   SYNC_STATUS_TEXT,
@@ -479,11 +481,12 @@ export default function App() {
     const rolled = rollToToday(backup.current);
     const current = publishCurrent(rolled.data);
     syncProfileFields(current.profile);
-    const archived = await ensureDaily(current);
-    if (userEditedRef.current || rolled.rolled || archived) {
-      markLocalChange();
-      return true;
+    try {
+      await ensureDaily(current);
+    } catch (error) {
+      console.error("Auto archive failed", error);
     }
+    if (userEditedRef.current) return true;
     rememberUpdatedAt(updatedAt);
     return false;
   };
@@ -531,6 +534,18 @@ export default function App() {
         return;
       }
       if (result.document.saved === false) {
+        const cloudBackup = readCloudBackup(result.document.data);
+        if (userEditedRef.current && cloudBackup) {
+          const merged = mergeCloudPayload(
+            { current: dataRef.current, records: recordsRef.current },
+            { current: cloudBackup.current, records: cloudBackup.records }
+          );
+          await replaceHistory(merged.records);
+          const current = publishCurrent(merged.current);
+          syncProfileFields(current.profile);
+          markLocalChange();
+          continue;
+        }
         const followUp = await applyRemoteBackup(result.document.data, result.document.updatedAt);
         if (userEditedRef.current || followUp) continue;
         setSyncStatus("synced");
@@ -614,11 +629,6 @@ export default function App() {
       }
 
       storageModeRef.current = "ready";
-      if (userEditedRef.current) {
-        await persistLocalBaseline();
-        await pushLatest();
-        return;
-      }
 
       const cloudBackup = result.type === "document" ? readCloudBackup(result.document.data) : null;
       if (result.type === "document" && !cloudBackup) {
@@ -627,17 +637,15 @@ export default function App() {
         return;
       }
 
-      const action = decideSyncAction({
+      const plan = planSync({
         cloud: result.type === "empty" ? "empty" : "present",
         localUpdatedAt: updatedAtRef.current,
         cloudUpdatedAt: result.type === "document" ? result.document.updatedAt : null,
         hasPersistedLocal: hadUserDataRef.current === true,
-        userEdited: false,
-        localDate: dataRef.current.date,
-        cloudDate: cloudBackup?.current.date
+        dirty: userEditedRef.current
       });
 
-      if (action === "download" && result.type === "document") {
+      if (plan === "apply-cloud" && result.type === "document") {
         const followUp = await applyRemoteBackup(result.document.data, result.document.updatedAt);
         if (userEditedRef.current || followUp) {
           await pushLatest();
@@ -647,13 +655,37 @@ export default function App() {
         return;
       }
 
-      const current = hadUserDataRef.current ? publishCurrent(dataRef.current) : dataRef.current;
-      const archived = await ensureDaily(current);
-      const shouldUpload = action === "upload" || (archived && hadUserDataRef.current === true);
-      if (userEditedRef.current || shouldUpload) {
-        if (!updatedAtRef.current || archived) markLocalChange();
+      if (plan === "merge" && result.type === "document" && cloudBackup) {
+        const merged = mergeCloudPayload(
+          { current: dataRef.current, records: recordsRef.current },
+          { current: cloudBackup.current, records: cloudBackup.records }
+        );
+        await replaceHistory(merged.records);
+        const current = publishCurrent(merged.current);
+        syncProfileFields(current.profile);
+        markLocalChange();
         await pushLatest();
         return;
+      }
+
+      if (plan === "upload-local") {
+        const current = hadUserDataRef.current || userEditedRef.current
+          ? publishCurrent(dataRef.current)
+          : dataRef.current;
+        try {
+          await ensureDaily(current);
+        } catch (error) {
+          console.error("Auto archive failed", error);
+        }
+        if (!updatedAtRef.current) markLocalChange();
+        await pushLatest();
+        return;
+      }
+
+      try {
+        await ensureDaily(dataRef.current);
+      } catch (error) {
+        console.error("Auto archive failed", error);
       }
       setSyncStatus("synced");
     } catch (error) {
@@ -664,7 +696,7 @@ export default function App() {
       syncingRef.current = false;
       if (syncAgainRef.current) {
         syncAgainRef.current = false;
-        void reconcile();
+        void enqueueCloudSync(() => reconcileRef.current());
       }
     }
   };
@@ -684,19 +716,29 @@ export default function App() {
   }, [db]);
 
   useEffect(() => {
-    const onOnline = () => {
-      if (storageModeRef.current === "ready") {
-        void enqueueCloudSync(() => reconcileRef.current());
-      }
+    const refresh = () => {
+      if (storageModeRef.current !== "ready") return;
+      void enqueueCloudSync(() => reconcileRef.current());
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refresh();
     };
     const onOffline = () => {
       if (storageModeRef.current === "ready") setSyncStatus("offline");
     };
-    window.addEventListener("online", onOnline);
+    window.addEventListener("online", refresh);
     window.addEventListener("offline", onOffline);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    document.addEventListener("visibilitychange", onVisibility);
+    const interval = window.setInterval(refresh, CLOUD_REFRESH_INTERVAL_MS);
     return () => {
-      window.removeEventListener("online", onOnline);
+      window.removeEventListener("online", refresh);
       window.removeEventListener("offline", onOffline);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(interval);
     };
   }, []);
 

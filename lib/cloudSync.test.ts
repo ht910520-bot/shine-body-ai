@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { decideSyncAction, interpretCloudResponse, CLOUD_STORAGE_NOT_CONFIGURED } from "../src/cloudSync.ts";
+import {
+  CLOUD_REFRESH_INTERVAL_MS,
+  CLOUD_STORAGE_NOT_CONFIGURED,
+  interpretCloudResponse,
+  mergeCloudPayload,
+  mergeWeightHistory,
+  planSync
+} from "../src/cloudSync.ts";
 import {
   CloudStorageNotConfiguredError,
   UpstashRedisStorage,
@@ -67,73 +74,114 @@ function restoreEnv() {
 }
 
 async function testDecision() {
-  assert.equal(decideSyncAction({
+  assert.ok(CLOUD_REFRESH_INTERVAL_MS >= 30_000 && CLOUD_REFRESH_INTERVAL_MS <= 60_000);
+
+  assert.equal(planSync({
     cloud: "empty",
     localUpdatedAt: null,
     cloudUpdatedAt: null,
     hasPersistedLocal: false,
-    userEdited: false
+    dirty: false
   }), "keep");
 
-  assert.equal(decideSyncAction({
+  assert.equal(planSync({
     cloud: "empty",
     localUpdatedAt: null,
     cloudUpdatedAt: null,
     hasPersistedLocal: true,
-    userEdited: false
-  }), "upload");
+    dirty: false
+  }), "upload-local");
 
-  assert.equal(decideSyncAction({
+  assert.equal(planSync({
     cloud: "present",
     localUpdatedAt: null,
     cloudUpdatedAt: "2026-10-23T00:00:00.000Z",
     hasPersistedLocal: true,
-    userEdited: false
-  }), "download");
+    dirty: false
+  }), "apply-cloud");
 
-  assert.equal(decideSyncAction({
+  assert.equal(planSync({
     cloud: "present",
     localUpdatedAt: "2026-10-23T02:00:00.000Z",
     cloudUpdatedAt: "2026-10-23T01:00:00.000Z",
     hasPersistedLocal: true,
-    userEdited: false
-  }), "upload");
+    dirty: false
+  }), "upload-local");
 
-  assert.equal(decideSyncAction({
+  assert.equal(planSync({
     cloud: "present",
-    localUpdatedAt: "2026-10-23T01:00:00.000Z",
-    cloudUpdatedAt: "2026-10-23T02:00:00.000Z",
+    localUpdatedAt: "2026-10-23T15:57:13.000Z",
+    cloudUpdatedAt: "2026-10-23T15:59:10.598Z",
     hasPersistedLocal: true,
-    userEdited: false
-  }), "download");
+    dirty: false
+  }), "apply-cloud");
 
-  assert.equal(decideSyncAction({
+  assert.equal(planSync({
     cloud: "present",
-    localUpdatedAt: "2026-10-22T00:00:00.000Z",
-    cloudUpdatedAt: "2026-10-23T00:00:00.000Z",
+    localUpdatedAt: "2026-10-23T15:57:13.000Z",
+    cloudUpdatedAt: "2026-10-23T15:59:10.598Z",
     hasPersistedLocal: true,
-    userEdited: true
-  }), "upload");
+    dirty: true
+  }), "merge");
 
-  assert.equal(decideSyncAction({
+  assert.equal(planSync({
     cloud: "present",
-    localUpdatedAt: "2026-10-23T00:00:00.000Z",
-    cloudUpdatedAt: "2026-10-23T00:00:00.000Z",
+    localUpdatedAt: "2026-10-23T16:00:00.000Z",
+    cloudUpdatedAt: "2026-10-23T15:59:10.598Z",
     hasPersistedLocal: true,
-    userEdited: false,
-    localDate: "2026-10-23",
-    cloudDate: "2026-10-22"
-  }), "upload");
+    dirty: true
+  }), "upload-local");
 
-  assert.equal(decideSyncAction({
+  assert.equal(planSync({
     cloud: "present",
-    localUpdatedAt: "2026-10-23T00:00:00.000Z",
-    cloudUpdatedAt: "2026-10-23T00:00:00.000Z",
+    localUpdatedAt: "2026-10-23T15:59:10.598Z",
+    cloudUpdatedAt: "2026-10-23T15:59:10.598Z",
     hasPersistedLocal: true,
-    userEdited: false,
-    localDate: "2026-10-23",
-    cloudDate: "2026-10-23"
+    dirty: false
   }), "keep");
+
+  const localWeights = [
+    { date: "2026-07-17", weight: 64.2 },
+    { date: "2026-10-05", weight: 62 }
+  ];
+  const cloudWeights = [
+    { date: "2026-07-17", weight: 64.2 },
+    { date: "2026-07-30", weight: 63.1 },
+    { date: "2026-09-24", weight: 62.4 },
+    { date: "2026-10-05", weight: 63 }
+  ];
+  const mergedWeights = mergeWeightHistory(localWeights, cloudWeights, "cloud");
+  assert.deepEqual(mergedWeights.map((point) => point.date), [
+    "2026-07-17",
+    "2026-07-30",
+    "2026-09-24",
+    "2026-10-05"
+  ]);
+  assert.equal(mergedWeights.find((point) => point.date === "2026-10-05")?.weight, 63);
+
+  const merged = mergeCloudPayload(
+    {
+      current: {
+        date: "2026-10-23",
+        foods: [{ name: "未上傳的早餐" }],
+        weightHistory: [...localWeights, { date: "2026-10-20", weight: 61.2 }]
+      },
+      records: [{ id: "manual:local", snapshot: true }]
+    },
+    {
+      current: {
+        date: "2026-10-23",
+        foods: [],
+        weightHistory: cloudWeights
+      },
+      records: [{ id: "daily:2026-10-23", snapshot: true }]
+    }
+  );
+  assert.deepEqual(merged.current.foods, [{ name: "未上傳的早餐" }]);
+  assert.equal(merged.current.weightHistory.find((point) => point.date === "2026-10-20")?.weight, 61.2);
+  assert.equal(merged.current.weightHistory.find((point) => point.date === "2026-10-05")?.weight, 63);
+  assert.equal(merged.current.weightHistory.length, 5);
+  assert.deepEqual(merged.records.map((record) => record.id).sort(), ["daily:2026-10-23", "manual:local"]);
 }
 
 async function testApi() {
