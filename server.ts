@@ -3,14 +3,11 @@ import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { handleUserData } from "./lib/userDataApi.js";
-import { analyzeFoodImage, MISSING_NVIDIA_KEY_ERROR } from "./lib/analyzeFoodImage.js";
+import { analyzeFoodImage } from "./lib/analyzeFoodImage.js";
 import { analyzeFoodText } from "./lib/analyzeFoodText.js";
+import { hasCloudflareCredentials, MISSING_CLOUDFLARE_CREDS_ERROR } from "./lib/cloudflareAi.js";
 
 dotenv.config();
-
-function hasNvidiaKey() {
-  return Boolean(process.env.NVIDIA_API_KEY || process.env.NVIDIA_DEEPSEEK_API_KEY);
-}
 
 async function startServer() {
   const app = express();
@@ -47,8 +44,8 @@ async function startServer() {
       if (tooManyRequests(req)) {
         return res.status(429).json({ error: "分析次數過多，請一小時後再試。" });
       }
-      if (!hasNvidiaKey()) {
-        return res.status(500).json({ error: MISSING_NVIDIA_KEY_ERROR });
+      if (!hasCloudflareCredentials()) {
+        return res.status(500).json({ error: MISSING_CLOUDFLARE_CREDS_ERROR });
       }
 
       const { image, mimeType } = req.body || {};
@@ -69,8 +66,8 @@ async function startServer() {
       if (tooManyRequests(req)) {
         return res.status(429).json({ error: "分析次數過多，請一小時後再試。" });
       }
-      if (!hasNvidiaKey()) {
-        return res.status(500).json({ error: MISSING_NVIDIA_KEY_ERROR });
+      if (!hasCloudflareCredentials()) {
+        return res.status(500).json({ error: MISSING_CLOUDFLARE_CREDS_ERROR });
       }
 
       const { text, followUpAnswer, previous } = req.body || {};

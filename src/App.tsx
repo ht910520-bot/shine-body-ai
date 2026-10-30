@@ -953,7 +953,7 @@ export default function App() {
     }
     
     setIsAnalyzing(true);
-    setAiStatus("NVIDIA Vision 正在透過安全伺服器分析…");
+    setAiStatus("Workers AI 正在透過安全伺服器分析…");
 
     try {
       const response = await fetch("/api/analyze-food", {
@@ -1008,7 +1008,7 @@ export default function App() {
     }
 
     setIsAnalyzingText(true);
-    setAiStatus("NVIDIA 文字模型分析中…");
+    setAiStatus("Workers AI 文字模型分析中…");
     try {
       const response = await fetch("/api/analyze-food-text", {
         method: "POST",
@@ -1364,7 +1364,7 @@ export default function App() {
           </div>
         </div>
         <div className="header-meta">
-          <div className="tag">照片經安全伺服器傳給 NVIDIA 分析</div>
+          <div className="tag">照片經安全伺服器傳給 Cloudflare Workers AI 分析</div>
           <p
             className="sync-pill"
             data-sync-status={syncStatus}
@@ -1703,7 +1703,7 @@ export default function App() {
             <div className="ai-box" style={{ marginBottom: "12px" }}>
               <div className="ai-heading"><img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg?v=2" alt="珊珊熊熊" /><b>💬 自然語言查詢熱量</b></div>
               <div className="notice" style={{ marginTop: "6px" }}>
-                直接輸入「711 阜杭豆漿飯糰」或「雞胸肉便當」；使用 NVIDIA API 估算，資訊不足時再向你確認。
+                直接輸入「711 阜杭豆漿飯糰」或「雞胸肉便當」；使用 Cloudflare Workers AI 估算，資訊不足時再向你確認。
               </div>
               <label style={{ display: "block", marginTop: "9px" }}>
                 餐點描述
@@ -1743,7 +1743,7 @@ export default function App() {
             <div className="ai-box">
               <div className="ai-heading"><img className="bear-ai-icon" src="/assets/sansan-bear-icon.svg?v=2" alt="珊珊熊熊" /><b>✨ AI 影像辨識</b></div>
               <div className="fields" style={{ marginTop: "9px" }}>
-                <div className="notice">照片分析服務：NVIDIA Vision。API key 只在伺服器端維護。</div>
+                <div className="notice">照片分析服務：Cloudflare Workers AI。API token 只在伺服器端維護。</div>
                 <label>
                   選擇或拍攝食物照片
                   <input

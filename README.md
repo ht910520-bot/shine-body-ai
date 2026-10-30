@@ -15,15 +15,15 @@ View your app in AI Studio: https://ai.studio/apps/b820f5a3-b823-4bdc-9c94-c54f0
 
 1. Install dependencies:
    `npm install`
-2. Set `NVIDIA_API_KEY` in [.env.local](.env.local) to your NVIDIA API key
+2. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in [.env.local](.env.local)
 3. Run the app:
    `npm run dev`
 
 ## Railway
 
 The included `Dockerfile` and `railway.json` deploy the React frontend and
-Express API as one Railway service. Configure `NVIDIA_API_KEY` as a Railway
-environment variable; never commit a real key to GitHub.
+Express API as one Railway service. Configure `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_API_TOKEN` as environment variables; never commit a real token.
 
 Health check: `/api/health`
 
@@ -46,35 +46,35 @@ records on this device; the app then shows 「僅本機」. Do not commit the to
 Conflicts keep the document with the newer `updatedAt`. An empty cloud account
 imports existing on-device data once. Importing a JSON backup uploads it too.
 
-## NVIDIA food analysis
+## Cloudflare Workers AI food analysis
 
-Photo and text analysis use NVIDIA NIM only. Set `NVIDIA_API_KEY`, or the
-alternate `NVIDIA_DEEPSEEK_API_KEY`, to the same NVIDIA endpoint key. If
-neither is set, the API returns `伺服器尚未設定 NVIDIA_API_KEY 或 NVIDIA_DEEPSEEK_API_KEY。`
-There is no Gemini fallback.
+Photo and text analysis call the Workers AI REST API:
 
-Food-photo analysis tries `minimaxai/minimax-m3.1-flash`, then
-`meta/muse-glimmer-30b`, then `meta/llama-3.2-90b-vision-instruct`. The first
-valid result stops the chain. `nvidia/llama-3.1-nemotron-nano-vl-8b-v1` is
-retired, and `meta/llama-3.2-11b-vision-instruct` is too slow for the 60-second
-function limit, so neither is in the default chain. Each request defaults to
-45 seconds and can be raised to 50 seconds. The whole chain defaults to 55
-seconds, under the Hobby `maxDuration` of 60. MiniMax spends completion tokens
-on reasoning before it writes the JSON, so `max_tokens` defaults to 3000.
-A 700-token cap returns `finish_reason=length` and empty content. Override the
-chain with `NVIDIA_VISION_MODELS`, the fallback list with
-`NVIDIA_VISION_FALLBACK_MODELS` (or the legacy `NVIDIA_VISION_FALLBACK_MODEL`),
-the per-request timeout with `NVIDIA_VISION_TIMEOUT_MS`, the chain budget with
-`NVIDIA_VISION_TOTAL_TIMEOUT_MS`, and the token cap with
-`NVIDIA_VISION_MAX_TOKENS`. An empty reply or `finish_reason=length` is logged
-with `finish_reason` and token usage, and the API error names the last NVIDIA
-model failure.
+`POST https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/run/{MODEL}`
 
-Natural-language meal lookup uses `nvidia/mistral-nemo-minitron-8b-8k-instruct`.
-`meta/llama-3.1-8b-instruct` is no longer listed by NVIDIA's `/v1/models`
-endpoint. The text request defaults to 12 seconds and 1200 output tokens, with
-upper limits of 25 seconds and 4096 tokens so it stays inside the 30-second
-text function. Override it with `NVIDIA_MODEL`, `NVIDIA_TEXT_TIMEOUT_MS`, and
-`NVIDIA_TEXT_MAX_TOKENS`. The same empty-content and `finish_reason=length`
-logging applies. Lookup is an estimate from the model and does not search the
-live web.
+with `Authorization: Bearer CLOUDFLARE_API_TOKEN`. Set these Vercel environment
+variables:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_VISION_MODEL` (default `@cf/meta/llama-3.2-11b-vision-instruct`)
+- `CLOUDFLARE_TEXT_MODEL` (default `@cf/meta/llama-3.1-8b-instruct-fast`)
+
+`CF_ACCOUNT_ID` and `CF_API_TOKEN` are accepted aliases for the account id and
+token. `CLOUDFLARE_AUTH_TOKEN` is also accepted as a token alias. If the
+account id and token are both missing, the API returns
+`伺服器尚未設定 CLOUDFLARE_ACCOUNT_ID 與 CLOUDFLARE_API_TOKEN。`
+
+Food photos use one call to `@cf/meta/llama-3.2-11b-vision-instruct`. The
+request times out at 50 seconds and asks for at most 768 tokens, under the
+Hobby `maxDuration` of 60. There is no model fallback chain. The first time
+that vision model is used on an account, Cloudflare requires accepting Meta's
+license. Do that in the Workers AI dashboard, or with one authenticated
+request whose JSON body is `{"prompt":"agree"}`.
+
+Natural-language meal lookup uses `@cf/meta/llama-3.1-8b-instruct-fast`.
+The unprefixed `@cf/meta/llama-3.1-8b-instruct` id is deprecated. The text
+request times out at 20 seconds and asks for at most 512 tokens, inside the
+30-second text function. If a key fact such as rice amount, frying, sauce, or portion size
+is missing, the JSON `status` is `needs_confirmation` and `question` asks one
+thing. Lookup is a model estimate and does not search the live web.
