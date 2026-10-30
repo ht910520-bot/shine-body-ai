@@ -1,4 +1,5 @@
-import { analyzeFoodText, MISSING_NVIDIA_KEY_ERROR } from "../lib/analyzeFoodText.js";
+import { analyzeFoodText } from "../lib/analyzeFoodText.js";
+import { hasCloudflareCredentials, MISSING_CLOUDFLARE_CREDS_ERROR } from "../lib/cloudflareAi.js";
 
 
 export default async function handler(req: any, res: any) {
@@ -9,9 +10,8 @@ export default async function handler(req: any, res: any) {
 
 
   try {
-    const nvidiaApiKey = process.env.NVIDIA_API_KEY || process.env.NVIDIA_DEEPSEEK_API_KEY;
-    if (!nvidiaApiKey) {
-      return res.status(500).json({ error: MISSING_NVIDIA_KEY_ERROR });
+    if (!hasCloudflareCredentials()) {
+      return res.status(500).json({ error: MISSING_CLOUDFLARE_CREDS_ERROR });
     }
 
 
