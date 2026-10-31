@@ -3,6 +3,7 @@ import {
   type AiEnv,
   aiEnvFromProcess,
   runWorkersAi,
+  textRuntimeConfig,
   visionRuntimeConfig,
   workersAiJson,
   workersAiText,
@@ -10,19 +11,9 @@ import {
 } from "./cloudflareAi.js";
 import { parseModelJson } from "./modelJson.js";
 
-const imagePrompt = `{
-Analyze the attached meal photo. Identify every visible food and side dish, then estimate realistic calories, protein, carbohydrates, and fat for the entire visible serving.
-
-Return exactly one valid JSON object without Markdown. It must contain:
-- "items": an array of objects with "name", "calories", "protein", "carbs", and "fat".
-- "totalCalories": the integer calorie total for all items.
-- "confidence": exactly "high", "medium", or "low".
-- "notes": a short estimation note.
-- "food": an object with "name", "calories", "protein", "carbs", "fat", and "description" for the whole meal.
-
-Use numbers only for all nutrition fields, without units. If any edible food is visible, every applicable calorie estimate and totalCalories must be greater than zero; do not use placeholder zeroes. Use reasonable common serving sizes when exact weight is unknown. Only return zero calories when there is no food or the image cannot be read. Do not claim exact weights or official nutrition facts. Write all human-readable names, notes, and descriptions in Traditional Chinese. Reply with one JSON object only, no Markdown or preamble.`;
-
-const retryPrompt = `Reply with ONLY one JSON object, no markdown, no preamble, and no bullet lists. Use Traditional Chinese names, notes, and descriptions. Identify visible food and estimate nutrition for the whole serving. Include items, totalCalories, confidence, notes, and food (name, calories, protein, carbs, fat, description). Use numeric nutrition values and positive calories when food is visible.`;
+const imagePrompt = `請只辨識照片中清楚可見的食物、配菜、飲料及大約份量，使用繁體中文列出。不要估算熱量或任何營養數值，不要輸出 JSON、前言或建議；若看不到食物，請簡短說明。`;
+const retryPrompt = `請重新查看照片，只用繁體中文列出清楚可見的食物與大約份量。不要估算熱量或營養，不要輸出 JSON。`;
+const nutritionPrompt = (description: string) => `根據以下照片辨識描述，估算整份餐點的營養：\n${description}\n\n請合理估算常見份量，不要假稱精確重量或官方數據。所有文字使用繁體中文。只回傳 JSON，不要 Markdown 或前言，格式如下：{"items":[{"name":"食物名稱","calories":1,"protein":1,"carbs":1,"fat":1}],"totalCalories":1,"confidence":"high|medium|low","notes":"份量假設","food":{"name":"餐點名稱","calories":1,"protein":1,"carbs":1,"fat":1,"description":"餐點與份量描述"}}。看得到食物時所有適用熱量須大於零。`;
 
 function safeMimeType(mimeType?: string) {
   return /^image\/(jpeg|jpg|png|webp)$/i.test(mimeType || "") ? mimeType : "image/jpeg";
@@ -75,6 +66,7 @@ export function visionImageInput(image: string, mimeType?: string) {
 
 export async function analyzeFoodImage(image: string, mimeType?: string, env: AiEnv = aiEnvFromProcess()) {
   const { model, timeoutMs, maxTokens } = visionRuntimeConfig(env);
+  const textConfig = textRuntimeConfig(env);
   try {
     let payload = await runWorkersAi(model, {
       prompt: imagePrompt,
@@ -82,7 +74,6 @@ export async function analyzeFoodImage(image: string, mimeType?: string, env: Ai
       max_tokens: maxTokens,
       temperature: 0.1
     }, env, timeoutMs);
-    let direct = workersAiJson(payload);
     let content = workersAiText(payload).trim();
     if (!content) {
       console.warn(JSON.stringify({
@@ -91,16 +82,21 @@ export async function analyzeFoodImage(image: string, mimeType?: string, env: Ai
         model,
         usage: workersAiUsage(payload)
       }));
-      throw new Error(`Cloudflare Vision 模型 ${model} 未回傳文字內容。`);
-    }
-    let parsed: any;
-    try { parsed = direct || parseModelJson(content); }
-    catch {
       payload = await runWorkersAi(model, { prompt: retryPrompt, image: visionImageInput(image, mimeType), max_tokens: maxTokens, temperature: 0.1 }, env, timeoutMs);
-      direct = workersAiJson(payload);
       content = workersAiText(payload).trim();
-      parsed = direct || parseModelJson(content);
+      if (!content) throw new Error(`Cloudflare Vision 模型 ${model} 未回傳文字內容。`);
     }
+    const description = content;
+    payload = await runWorkersAi(textConfig.model, {
+      messages: [
+        { role: "system", content: "你是嚴謹的繁體中文飲食熱量估算助手。只輸出指定 JSON。" },
+        { role: "user", content: nutritionPrompt(description) }
+      ],
+      max_tokens: textConfig.maxTokens,
+      temperature: 0.1
+    }, env, textConfig.timeoutMs);
+    const nutritionContent = workersAiText(payload).trim();
+    const parsed: any = workersAiJson(payload) || parseModelJson(nutritionContent);
     const normalized = normalizeResult(parsed);
     return {
       ...normalized,

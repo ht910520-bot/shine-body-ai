@@ -120,11 +120,13 @@ await check("model JSON extraction and Workers AI payload variants", () => {
 await check("vision retries markdown-only result once with same image", async () => {
   let calls = 0;
   const result = await analyzeFoodImage("photo-bytes", "image/jpeg", {
-    AI: { async run(_model, input) {
+    AI: { async run(model, input) {
       calls += 1;
-      assert.equal(input.image, "data:image/jpeg;base64,photo-bytes");
-      if (calls === 1) return { response: "- 牛排\n- 馬鈴薯" };
-      assert.match(String(input.prompt), /ONLY one JSON object/);
+      if (model === DEFAULT_VISION_MODEL) {
+        assert.equal(input.image, "data:image/jpeg;base64,photo-bytes");
+        assert.match(String(input.prompt), /不要估算熱量/);
+        return { response: "牛排一份、馬鈴薯與蔬菜" };
+      }
       return { response: mealJson() };
     } }
   });
@@ -149,42 +151,39 @@ await check("defaults are the Workers AI models", () => {
   assert.equal(textRuntimeConfig().model, "@cf/meta/llama-3.2-3b-instruct");
 });
 
-await check("photo request posts to Workers AI with the vision model", async () => {
+await check("photo request uses vision description followed by text nutrition", async () => {
   process.env.CLOUDFLARE_ACCOUNT_ID = "acct-1";
   process.env.CLOUDFLARE_API_TOKEN = "test-token";
-  let url = "";
+  const urls: string[] = [];
   let auth = "";
   let body: any = null;
   globalThis.fetch = async (input, init) => {
-    url = String(input);
+    urls.push(String(input));
     auth = new Headers(init?.headers).get("authorization") || "";
     body = JSON.parse(String(init?.body));
     assert.equal(init?.signal instanceof AbortSignal, true);
-    return workersResult(mealJson());
+    return workersResult(urls.length === 1 ? "牛排一份，搭配馬鈴薯與蔬菜" : mealJson());
   };
   const result = await analyzeFoodImage("abc", "image/jpeg");
-  assert.equal(url, workersAiRunUrl("acct-1", DEFAULT_VISION_MODEL));
-  assert.equal(url.includes("integrate.api.nvidia.com"), false);
+  assert.deepEqual(urls, [workersAiRunUrl("acct-1", DEFAULT_VISION_MODEL), workersAiRunUrl("acct-1", DEFAULT_TEXT_MODEL)]);
   assert.equal(auth, "Bearer test-token");
-  assert.equal(body.image, "data:image/jpeg;base64,abc");
-  assert.equal(body.max_tokens, DEFAULT_VISION_MAX_TOKENS);
-  assert.equal(String(body.prompt).includes("JSON"), true);
+  assert.equal(body.max_tokens, DEFAULT_TEXT_MAX_TOKENS);
   assert.equal(result.food.calories, 720);
   assert.equal(result.provider, `Cloudflare Workers AI (${DEFAULT_VISION_MODEL})`);
 });
 
-await check("CF_ACCOUNT_ID and CF_API_TOKEN are accepted aliases", async () => {
+await check("CF_ACCOUNT_ID and CF_API_TOKEN are accepted aliases for both stages", async () => {
   process.env.CF_ACCOUNT_ID = "acct-alias";
   process.env.CF_API_TOKEN = "alias-token";
   let auth = "";
-  let url = "";
+  const urls: string[] = [];
   globalThis.fetch = async (input, init) => {
-    url = String(input);
+    urls.push(String(input));
     auth = new Headers(init?.headers).get("authorization") || "";
-    return workersResult(mealJson());
+    return workersResult(urls.length === 1 ? "牛排一份" : mealJson());
   };
   await analyzeFoodImage("abc", "image/png");
-  assert.equal(url, workersAiRunUrl("acct-alias", DEFAULT_VISION_MODEL));
+  assert.deepEqual(urls, [workersAiRunUrl("acct-alias", DEFAULT_VISION_MODEL), workersAiRunUrl("acct-alias", DEFAULT_TEXT_MODEL)]);
   assert.equal(auth, "Bearer alias-token");
 });
 

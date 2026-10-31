@@ -146,13 +146,19 @@ await check("the AI binding is preferred over the REST token", async () => {
   };
   let model = "";
   let image = "";
+  let visionModel = "";
   const result = await analyzeFoodImage("abc", "image/png", {
     AI: {
       async run(nextModel, input) {
         model = nextModel;
-        image = String(input.image);
-        assert.equal(input.max_tokens, 2_048);
-        assert.equal(typeof input.prompt, "string");
+        if (input.image) image = String(input.image);
+        if (nextModel === DEFAULT_VISION_MODEL) {
+          visionModel = nextModel;
+          assert.equal(input.max_tokens, 2_048);
+          assert.match(String(input.prompt), /不要估算熱量/);
+          return { response: "牛排一份，搭配馬鈴薯與蔬菜" };
+        }
+        assert.equal(input.max_tokens, 1_200);
         return { response: mealJson() };
       }
     },
@@ -160,7 +166,8 @@ await check("the AI binding is preferred over the REST token", async () => {
     CLOUDFLARE_API_TOKEN: "secret-token"
   });
   assert.equal(called, false);
-  assert.equal(model, DEFAULT_VISION_MODEL);
+  assert.equal(model, DEFAULT_TEXT_MODEL);
+  assert.equal(visionModel, DEFAULT_VISION_MODEL);
   assert.equal(image, "data:image/png;base64,abc");
   assert.equal(result.food.calories, 720);
   assert.match(result.provider, /llama-3\.2-11b-vision-instruct/);
