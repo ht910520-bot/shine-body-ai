@@ -118,6 +118,7 @@ await check("pages stay behind the same login gate", async () => {
   assert.equal(authed.status, 200);
   assert.equal(await authed.text(), "spa");
   assert.equal(authorizeRequest(new Request("https://shine.example/login.html"), accessCode), null);
+  assert.equal(authorizeRequest(new Request("https://shine.example/login"), accessCode), null);
 });
 
 await check("vision defaults and clamps use the Workers AI model", () => {

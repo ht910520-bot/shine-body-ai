@@ -12,6 +12,9 @@
   "assets": {
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
+    // Keep /login.html as-is. Default html_handling redirects it to /login,
+    // which is not public and loops with the auth gate (303 ↔ 307).
+    "html_handling": "none",
     "run_worker_first": true
   },
   "ai": {

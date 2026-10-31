@@ -1,6 +1,6 @@
 import { isValidSession } from "./sessionAuth.js";
 
-export const PUBLIC_PATHS = new Set(["/login.html", "/api/login", "/api/logout", "/api/health"]);
+export const PUBLIC_PATHS = new Set(["/login", "/login.html", "/api/login", "/api/logout", "/api/health"]);
 
 export function authorizeRequest(request: Request, accessCode: string) {
   const url = new URL(request.url);

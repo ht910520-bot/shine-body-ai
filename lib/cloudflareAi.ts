@@ -112,6 +112,8 @@ export function workersAiText(payload: unknown) {
   if (typeof unwrapped === "string") return unwrapped;
   if (!unwrapped || typeof unwrapped !== "object") return "";
   const record = unwrapped as Record<string, unknown>;
+  if (record.response && typeof record.response === "object") return JSON.stringify(record.response);
+  if (record.result && typeof record.result === "object") return JSON.stringify(record.result);
   if (typeof record.response === "string") return record.response;
   if (typeof record.result === "string") return record.result;
   const choice = Array.isArray(record.choices) ? record.choices[0] : undefined;
@@ -127,6 +129,17 @@ export function workersAiText(payload: unknown) {
     }
   }
   return "";
+}
+
+export function workersAiJson(payload: unknown): Record<string, unknown> | null {
+  const unwrapped = unwrapPayload(payload);
+  if (!unwrapped || typeof unwrapped !== "object") return null;
+  const record = unwrapped as Record<string, unknown>;
+  const candidate = record.response && typeof record.response === "object" ? record.response
+    : record.result && typeof record.result === "object" ? record.result : record;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  const value = candidate as Record<string, unknown>;
+  return ("items" in value || "food" in value || "totalCalories" in value) ? value : null;
 }
 
 export function workersAiUsage(payload: unknown) {

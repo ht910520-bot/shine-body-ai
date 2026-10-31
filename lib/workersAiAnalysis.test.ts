@@ -13,8 +13,11 @@ import {
   aiEnvFromProcess,
   textRuntimeConfig,
   visionRuntimeConfig,
-  workersAiRunUrl
+  workersAiRunUrl,
+  workersAiJson,
+  workersAiText
 } from "./cloudflareAi.ts";
+import { parseModelJson } from "./modelJson.ts";
 
 const originalFetch = globalThis.fetch;
 const originalWarn = console.warn;
@@ -102,6 +105,32 @@ async function check(name: string, fn: () => void | Promise<void>) {
     resetRateLimits();
   }
 }
+
+await check("model JSON extraction and Workers AI payload variants", () => {
+  assert.deepEqual(parseModelJson("Here is the estimate:\n```json\n{\"food\":{\"name\":\"牛排\"}}\n```"), { food: { name: "牛排" } });
+  assert.throws(() => parseModelJson("- 牛排\n- 馬鈴薯"), /AI 沒有回傳可讀取的 JSON/);
+  const object = { items: [], totalCalories: 100, food: { name: "牛排", calories: 100 } };
+  assert.equal(workersAiText("plain response"), "plain response");
+  assert.equal(workersAiText({ response: "bound response" }), "bound response");
+  assert.equal(workersAiJson({ response: object })?.totalCalories, 100);
+  assert.equal(workersAiText({ success: true, result: { response: "rest response" } }), "rest response");
+  assert.equal(workersAiJson({ success: true, result: { response: object } })?.totalCalories, 100);
+});
+
+await check("vision retries markdown-only result once with same image", async () => {
+  let calls = 0;
+  const result = await analyzeFoodImage("photo-bytes", "image/jpeg", {
+    AI: { async run(_model, input) {
+      calls += 1;
+      assert.equal(input.image, "data:image/jpeg;base64,photo-bytes");
+      if (calls === 1) return { response: "- 牛排\n- 馬鈴薯" };
+      assert.match(String(input.prompt), /ONLY one JSON object/);
+      return { response: mealJson() };
+    } }
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.totalCalories, 720);
+});
 
 await check("defaults are the Workers AI models", () => {
   assert.equal(visionRuntimeConfig().model, DEFAULT_VISION_MODEL);

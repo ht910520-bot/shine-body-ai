@@ -4,12 +4,14 @@ import {
   aiEnvFromProcess,
   runWorkersAi,
   visionRuntimeConfig,
+  workersAiJson,
   workersAiText,
   workersAiUsage
 } from "./cloudflareAi.js";
 import { parseModelJson } from "./modelJson.js";
 
-const imagePrompt = `Analyze the attached meal photo. Identify every visible food and side dish, then estimate realistic calories, protein, carbohydrates, and fat for the entire visible serving.
+const imagePrompt = `{
+Analyze the attached meal photo. Identify every visible food and side dish, then estimate realistic calories, protein, carbohydrates, and fat for the entire visible serving.
 
 Return exactly one valid JSON object without Markdown. It must contain:
 - "items": an array of objects with "name", "calories", "protein", "carbs", and "fat".
@@ -18,7 +20,9 @@ Return exactly one valid JSON object without Markdown. It must contain:
 - "notes": a short estimation note.
 - "food": an object with "name", "calories", "protein", "carbs", "fat", and "description" for the whole meal.
 
-Use numbers only for all nutrition fields, without units. If any edible food is visible, every applicable calorie estimate and totalCalories must be greater than zero; do not use placeholder zeroes. Use reasonable common serving sizes when exact weight is unknown. Only return zero calories when there is no food or the image cannot be read. Do not claim exact weights or official nutrition facts. Write all human-readable names, notes, and descriptions in Traditional Chinese.`;
+Use numbers only for all nutrition fields, without units. If any edible food is visible, every applicable calorie estimate and totalCalories must be greater than zero; do not use placeholder zeroes. Use reasonable common serving sizes when exact weight is unknown. Only return zero calories when there is no food or the image cannot be read. Do not claim exact weights or official nutrition facts. Write all human-readable names, notes, and descriptions in Traditional Chinese. Reply with one JSON object only, no Markdown or preamble.`;
+
+const retryPrompt = `Reply with ONLY one JSON object, no markdown, no preamble, and no bullet lists. Use Traditional Chinese names, notes, and descriptions. Identify visible food and estimate nutrition for the whole serving. Include items, totalCalories, confidence, notes, and food (name, calories, protein, carbs, fat, description). Use numeric nutrition values and positive calories when food is visible.`;
 
 function safeMimeType(mimeType?: string) {
   return /^image\/(jpeg|jpg|png|webp)$/i.test(mimeType || "") ? mimeType : "image/jpeg";
@@ -72,13 +76,14 @@ export function visionImageInput(image: string, mimeType?: string) {
 export async function analyzeFoodImage(image: string, mimeType?: string, env: AiEnv = aiEnvFromProcess()) {
   const { model, timeoutMs, maxTokens } = visionRuntimeConfig(env);
   try {
-    const payload = await runWorkersAi(model, {
+    let payload = await runWorkersAi(model, {
       prompt: imagePrompt,
       image: visionImageInput(image, mimeType),
       max_tokens: maxTokens,
       temperature: 0.1
     }, env, timeoutMs);
-    const content = workersAiText(payload).trim();
+    let direct = workersAiJson(payload);
+    let content = workersAiText(payload).trim();
     if (!content) {
       console.warn(JSON.stringify({
         event: "workers_ai_empty_response",
@@ -88,7 +93,15 @@ export async function analyzeFoodImage(image: string, mimeType?: string, env: Ai
       }));
       throw new Error(`Cloudflare Vision 模型 ${model} 未回傳文字內容。`);
     }
-    const normalized = normalizeResult(parseModelJson(content));
+    let parsed: any;
+    try { parsed = direct || parseModelJson(content); }
+    catch {
+      payload = await runWorkersAi(model, { prompt: retryPrompt, image: visionImageInput(image, mimeType), max_tokens: maxTokens, temperature: 0.1 }, env, timeoutMs);
+      direct = workersAiJson(payload);
+      content = workersAiText(payload).trim();
+      parsed = direct || parseModelJson(content);
+    }
+    const normalized = normalizeResult(parsed);
     return {
       ...normalized,
       provider: `Cloudflare Workers AI (${model})`,
