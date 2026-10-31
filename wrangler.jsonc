@@ -20,6 +20,12 @@
   "ai": {
     "binding": "AI"
   },
+  "kv_namespaces": [
+    {
+      "binding": "SHINE_DATA",
+      "id": "140eccab0ea0454dbad0069916284ee2"
+    }
+  ],
   "vars": {
     "CLOUDFLARE_VISION_MODEL": "@cf/meta/llama-3.2-11b-vision-instruct",
     "CLOUDFLARE_TEXT_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast"

@@ -87,16 +87,27 @@ export async function analyzeFoodImage(image: string, mimeType?: string, env: Ai
       if (!content) throw new Error(`Cloudflare Vision 模型 ${model} 未回傳文字內容。`);
     }
     const description = content;
-    payload = await runWorkersAi(textConfig.model, {
-      messages: [
-        { role: "system", content: "你是嚴謹的繁體中文飲食熱量估算助手。只輸出指定 JSON。" },
-        { role: "user", content: nutritionPrompt(description) }
-      ],
-      max_tokens: textConfig.maxTokens,
-      temperature: 0.1
-    }, env, textConfig.timeoutMs);
-    const nutritionContent = workersAiText(payload).trim();
-    const parsed: any = workersAiJson(payload) || parseModelJson(nutritionContent);
+    async function estimateNutrition(prompt: string) {
+      const nutritionPayload = await runWorkersAi(textConfig.model, {
+        messages: [
+          { role: "system", content: "你是嚴謹的繁體中文飲食熱量估算助手。只輸出指定 JSON。可見食物時熱量必須大於 0。" },
+          { role: "user", content: prompt }
+        ],
+        max_tokens: textConfig.maxTokens,
+        temperature: 0.1
+      }, env, textConfig.timeoutMs);
+      const nutritionContent = workersAiText(nutritionPayload).trim();
+      return workersAiJson(nutritionPayload) || parseModelJson(nutritionContent);
+    }
+    let parsed: any = await estimateNutrition(nutritionPrompt(description));
+    try {
+      normalizeResult(parsed);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("0 kcal")) throw error;
+      parsed = await estimateNutrition(
+        `上一輪估出 0 熱量，請依描述重新估算且熱量必須 > 0。\n${nutritionPrompt(description)}`
+      );
+    }
     const normalized = normalizeResult(parsed);
     return {
       ...normalized,

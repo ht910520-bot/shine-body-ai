@@ -138,37 +138,30 @@ await check("vision defaults and clamps use the Workers AI model", () => {
   assert.equal(textRuntimeConfig({ CLOUDFLARE_TEXT_TIMEOUT_MS: "1000" }).timeoutMs, 3_000);
 });
 
-await check("the AI binding is preferred over the REST token", async () => {
-  let called = false;
-  globalThis.fetch = async () => {
-    called = true;
-    throw new Error("REST should not run");
+await check("REST credentials are preferred over the AI binding", async () => {
+  let restCalls = 0;
+  let bindingCalls = 0;
+  globalThis.fetch = async (_input, init) => {
+    restCalls += 1;
+    const body = JSON.parse(String(init?.body || "{}"));
+    if (body.image) {
+      assert.match(String(body.prompt), /不要估算熱量/);
+      return new Response(JSON.stringify({ success: true, result: { response: "牛排一份，搭配馬鈴薯與蔬菜" } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ success: true, result: { response: mealJson() } }), { status: 200 });
   };
-  let model = "";
-  let image = "";
-  let visionModel = "";
   const result = await analyzeFoodImage("abc", "image/png", {
     AI: {
-      async run(nextModel, input) {
-        model = nextModel;
-        if (input.image) image = String(input.image);
-        if (nextModel === DEFAULT_VISION_MODEL) {
-          visionModel = nextModel;
-          assert.equal(input.max_tokens, 2_048);
-          assert.match(String(input.prompt), /不要估算熱量/);
-          return { response: "牛排一份，搭配馬鈴薯與蔬菜" };
-        }
-        assert.equal(input.max_tokens, 1_200);
-        return { response: mealJson() };
+      async run() {
+        bindingCalls += 1;
+        throw new Error("binding should not run when REST credentials exist");
       }
     },
     CLOUDFLARE_ACCOUNT_ID: "account",
     CLOUDFLARE_API_TOKEN: "secret-token"
   });
-  assert.equal(called, false);
-  assert.equal(model, DEFAULT_TEXT_MODEL);
-  assert.equal(visionModel, DEFAULT_VISION_MODEL);
-  assert.equal(image, "data:image/png;base64,abc");
+  assert.ok(restCalls >= 2);
+  assert.equal(bindingCalls, 0);
   assert.equal(result.food.calories, 720);
   assert.match(result.provider, /llama-3\.2-11b-vision-instruct/);
   assert.match(result.notes, /Cloudflare Workers AI/);

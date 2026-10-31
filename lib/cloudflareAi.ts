@@ -189,7 +189,14 @@ export async function runWorkersAi(model: string, input: Record<string, unknown>
   });
 
   try {
-    const pending = env.AI ? env.AI.run(model, input) : runRest(model, input, env, timeoutMs);
+    // Prefer REST when account+token are set so photo nutrition matches the
+    // verified local path. The Workers AI binding remains the fallback.
+    const canRest = Boolean(env.CLOUDFLARE_ACCOUNT_ID?.trim() && env.CLOUDFLARE_API_TOKEN?.trim());
+    const pending = canRest
+      ? runRest(model, input, env, timeoutMs)
+      : env.AI
+        ? env.AI.run(model, input)
+        : runRest(model, input, env, timeoutMs);
     return await Promise.race([pending, timeout]);
   } catch (error) {
     if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {

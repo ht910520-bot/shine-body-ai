@@ -30,7 +30,8 @@ function runtimeFromEnv(env: Env): WorkerRuntime {
     UPSTASH_REDIS_REST_URL: readString(env, "UPSTASH_REDIS_REST_URL"),
     UPSTASH_REDIS_REST_TOKEN: readString(env, "UPSTASH_REDIS_REST_TOKEN"),
     KV_REST_API_URL: readString(env, "KV_REST_API_URL"),
-    KV_REST_API_TOKEN: readString(env, "KV_REST_API_TOKEN")
+    KV_REST_API_TOKEN: readString(env, "KV_REST_API_TOKEN"),
+    SHINE_DATA: env.SHINE_DATA
   };
 }
 
