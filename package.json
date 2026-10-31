@@ -5,12 +5,18 @@
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "scripts": {
-    "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "dev": "vite",
+    "dev:express": "tsx server.ts",
+    "build": "vite build",
+    "build:server": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "build:web": "vite build",
+    "preview": "vite preview",
+    "deploy": "pnpm run build && wrangler deploy",
     "start": "node dist/server.cjs",
+    "cf-typegen": "wrangler types --include-runtime false",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
+    "test": "tsx lib/cloudSync.test.ts && tsx lib/cloudflareAnalysis.test.ts && tsx lib/workersAiAnalysis.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
@@ -24,6 +30,8 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.66.0",
+    "@cloudflare/workers-types": "^5.20261029.1",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
@@ -31,6 +39,7 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "wrangler": "^4.156.0"
   }
 }

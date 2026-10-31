@@ -4,6 +4,7 @@ import {
   createDataStorage,
   parseStoredDocument,
   type DataStorage,
+  type StorageEnv,
   type StoredDocument
 } from "./storage.js";
 import { isValidSession } from "./sessionAuth.js";
@@ -39,9 +40,14 @@ function readJsonBody(body: unknown) {
   return body;
 }
 
-export async function handleUserData(req: DataApiRequest, res: DataApiResponse, storageOverride?: DataStorage) {
+export async function handleUserData(
+  req: DataApiRequest,
+  res: DataApiResponse,
+  storageOverride?: DataStorage,
+  env: StorageEnv & { APP_ACCESS_CODE?: string } = process.env
+) {
   try {
-    if (!isValidSession(req.headers?.cookie)) {
+    if (!isValidSession(req.headers?.cookie, env.APP_ACCESS_CODE)) {
       return send(res, 401, { error: "請先登入。" });
     }
 
@@ -53,7 +59,7 @@ export async function handleUserData(req: DataApiRequest, res: DataApiResponse, 
 
     let storage: DataStorage;
     try {
-      storage = storageOverride ?? createDataStorage();
+      storage = storageOverride ?? createDataStorage(env);
     } catch (error) {
       if (error instanceof CloudStorageNotConfiguredError) {
         return send(res, 503, { error: CLOUD_STORAGE_NOT_CONFIGURED });

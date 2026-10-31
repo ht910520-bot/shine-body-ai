@@ -1,45 +1,35 @@
 import {
-  MISSING_CLOUDFLARE_CREDS_ERROR,
-  parseModelJson,
-  runWorkersAi
+  MISSING_AI_CONFIG_ERROR,
+  type AiEnv,
+  aiEnvFromProcess,
+  runWorkersAi,
+  visionRuntimeConfig,
+  workersAiText,
+  workersAiUsage
 } from "./cloudflareAi.js";
+import { parseModelJson } from "./modelJson.js";
 
-export { MISSING_CLOUDFLARE_CREDS_ERROR };
+const imagePrompt = `Analyze the attached meal photo. Identify every visible food and side dish, then estimate realistic calories, protein, carbohydrates, and fat for the entire visible serving.
 
-// Llama 3.2 11B Vision is the Workers AI photo model. One short call stays
-// inside the Vercel Hobby 60s function limit; there is no fallback chain.
-export const DEFAULT_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
-export const DEFAULT_VISION_TIMEOUT_MS = 50_000;
-export const DEFAULT_VISION_MAX_TOKENS = 768;
+Return exactly one valid JSON object without Markdown. It must contain:
+- "items": an array of objects with "name", "calories", "protein", "carbs", and "fat".
+- "totalCalories": the integer calorie total for all items.
+- "confidence": exactly "high", "medium", or "low".
+- "notes": a short estimation note.
+- "food": an object with "name", "calories", "protein", "carbs", "fat", and "description" for the whole meal.
 
-const imagePrompt = "Identify the meal in the image and estimate calories, protein, carbs, and fat for the whole visible serving. Reply with one JSON object only, no markdown. Include items (name, calories, protein, carbs, fat), totalCalories, confidence (high, medium, or low), notes, and food (name, calories, protein, carbs, fat, description). Use realistic numbers above zero when food is visible. Write names, notes, and description in Traditional Chinese.";
-
+Use numbers only for all nutrition fields, without units. If any edible food is visible, every applicable calorie estimate and totalCalories must be greater than zero; do not use placeholder zeroes. Use reasonable common serving sizes when exact weight is unknown. Only return zero calories when there is no food or the image cannot be read. Do not claim exact weights or official nutrition facts. Write all human-readable names, notes, and descriptions in Traditional Chinese.`;
 
 function safeMimeType(mimeType?: string) {
   return /^image\/(jpeg|jpg|png|webp)$/i.test(mimeType || "") ? mimeType : "image/jpeg";
 }
 
-
-export function visionModel(env: NodeJS.ProcessEnv = process.env) {
-  return env.CLOUDFLARE_VISION_MODEL?.trim() || DEFAULT_VISION_MODEL;
-}
-
-
-function imageInput(image: string, mimeType?: string) {
-  const trimmed = image.trim();
-  if (/^data:image\/(jpeg|jpg|png|webp);base64,/i.test(trimmed)) return trimmed;
-  const raw = trimmed.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "");
-  return `data:${safeMimeType(mimeType)};base64,${raw}`;
-}
-
-
-function positiveNumber(value: any) {
+function positiveNumber(value: unknown) {
   const number = typeof value === "string"
     ? Number(value.match(/-?\d+(?:\.\d+)?/)?.[0])
     : Number(value);
   return Number.isFinite(number) && number > 0 ? number : 0;
 }
-
 
 function normalizeResult(parsed: any) {
   const items = Array.isArray(parsed?.items) ? parsed.items : [];
@@ -69,23 +59,36 @@ function normalizeResult(parsed: any) {
   };
 }
 
-
 function errorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
   return String(error);
 }
 
+export function visionImageInput(image: string, mimeType?: string) {
+  const base64 = image.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "");
+  return `data:${safeMimeType(mimeType)};base64,${base64}`;
+}
 
-export async function analyzeFoodImage(image: string, mimeType?: string) {
-  const model = visionModel();
+export async function analyzeFoodImage(image: string, mimeType?: string, env: AiEnv = aiEnvFromProcess()) {
+  const { model, timeoutMs, maxTokens } = visionRuntimeConfig(env);
   try {
-    const { text } = await runWorkersAi(model, {
-      messages: [{ role: "user", content: imagePrompt }],
-      image: imageInput(image, mimeType),
-      max_tokens: DEFAULT_VISION_MAX_TOKENS,
-      temperature: 0.2
-    }, DEFAULT_VISION_TIMEOUT_MS);
-    const normalized = normalizeResult(parseModelJson(text));
+    const payload = await runWorkersAi(model, {
+      prompt: imagePrompt,
+      image: visionImageInput(image, mimeType),
+      max_tokens: maxTokens,
+      temperature: 0.1
+    }, env, timeoutMs);
+    const content = workersAiText(payload).trim();
+    if (!content) {
+      console.warn(JSON.stringify({
+        event: "workers_ai_empty_response",
+        kind: "vision",
+        model,
+        usage: workersAiUsage(payload)
+      }));
+      throw new Error(`Cloudflare Vision 模型 ${model} 未回傳文字內容。`);
+    }
+    const normalized = normalizeResult(parseModelJson(content));
     return {
       ...normalized,
       provider: `Cloudflare Workers AI (${model})`,
@@ -93,10 +96,12 @@ export async function analyzeFoodImage(image: string, mimeType?: string) {
     };
   } catch (error) {
     const message = errorMessage(error);
-    const reported = message.startsWith("Cloudflare") || message.startsWith("模型沒有") || message.startsWith("AI 沒有")
+    const reported = message === MISSING_AI_CONFIG_ERROR || message.startsWith("Cloudflare") || message.startsWith("模型沒有") || message.startsWith("AI 沒有") || message.startsWith("不支援的") || message.startsWith("伺服器尚未")
       ? message
-      : `Cloudflare Workers AI 模型 ${model} 失敗：${message}`;
-    console.warn("Cloudflare Workers AI food photo analysis failed.", reported);
+      : `Cloudflare Vision 模型 ${model} 失敗：${message}`;
+    if (message !== MISSING_AI_CONFIG_ERROR) {
+      console.warn(JSON.stringify({ event: "workers_ai_vision_failed", model, message: reported }));
+    }
     throw new Error(reported);
   }
 }

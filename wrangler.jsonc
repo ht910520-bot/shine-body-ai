@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "shine-body-ai",
+  // Set this to today's date when creating the Worker. Review compatibility changes before moving it forward.
+  "compatibility_date": "2026-10-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./worker/index.ts",
+  "upload_source_maps": true,
+  "workers_dev": true,
+  // The login gate has to see HTML navigations and hashed assets, matching the old middleware matcher.
+  // API routes are included so /api/* is never served as a static file.
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    "CLOUDFLARE_VISION_MODEL": "@cf/meta/llama-3.2-11b-vision-instruct",
+    "CLOUDFLARE_TEXT_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast"
+  },
+  // A single-user app: keep logs and traces so AI and auth failures are visible.
+  // Lower head_sampling_rate if this Worker later takes public traffic.
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  }
+}

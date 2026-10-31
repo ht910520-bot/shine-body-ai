@@ -1,11 +1,19 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { cloudflare } from '@cloudflare/vite-plugin';
 import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      cloudflare({ viteEnvironment: { name: 'worker' } }),
+    ],
+    environments: {
+      worker: { build: { sourcemap: true } },
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
