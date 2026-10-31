@@ -1,100 +1,119 @@
 import express from "express";
 import path from "path";
+import { existsSync } from "fs";
 import dotenv from "dotenv";
-import { createServer as createViteServer } from "vite";
-import { handleUserData } from "./lib/userDataApi.js";
-import { analyzeFoodImage } from "./lib/analyzeFoodImage.js";
-import { analyzeFoodText } from "./lib/analyzeFoodText.js";
-import { hasCloudflareCredentials, MISSING_CLOUDFLARE_CREDS_ERROR } from "./lib/cloudflareAi.js";
+import { authorizeRequest } from "./lib/accessGate.js";
+import { handleApi, type RuntimeEnv } from "./lib/apiRoutes.js";
+import { aiEnvFromProcess } from "./lib/cloudflareAi.js";
 
 dotenv.config();
+dotenv.config({ path: ".dev.vars" });
+
+function runtimeEnv(): RuntimeEnv {
+  return {
+    ...aiEnvFromProcess(),
+    APP_ACCESS_CODE: process.env.APP_ACCESS_CODE,
+    DATA_STORAGE_ADAPTER: process.env.DATA_STORAGE_ADAPTER,
+    UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
+    UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
+    KV_REST_API_URL: process.env.KV_REST_API_URL,
+    KV_REST_API_TOKEN: process.env.KV_REST_API_TOKEN
+  };
+}
+
+function headerText(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value.join(", ");
+  return value || "";
+}
+
+function toWebRequest(req: express.Request, includeBody: boolean) {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (typeof value === "string") headers.set(key, value);
+    else if (Array.isArray(value)) headers.set(key, value.join(", "));
+  }
+  if (!headers.has("x-forwarded-for") && req.ip) headers.set("x-forwarded-for", req.ip);
+  if (!headers.has("cookie")) headers.set("cookie", headerText(req.headers.cookie));
+  const method = req.method.toUpperCase();
+  const init: RequestInit = { method, headers };
+  if (includeBody && method !== "GET" && method !== "HEAD") {
+    init.body = JSON.stringify(req.body ?? {});
+    if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  }
+  return new Request(new URL(req.originalUrl || req.url, `http://${req.headers.host || "localhost"}`), init);
+}
+
+async function writeNodeResponse(res: express.Response, response: Response) {
+  res.status(response.status);
+  const cookies = typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [];
+  response.headers.forEach((value, key) => {
+    if (key.toLowerCase() === "set-cookie") return;
+    res.setHeader(key, value);
+  });
+  if (cookies.length) res.setHeader("set-cookie", cookies);
+  const body = await response.text();
+  res.send(body);
+}
+
+function clientDist() {
+  const nested = path.join(process.cwd(), "dist", "client");
+  if (existsSync(path.join(nested, "index.html"))) return nested;
+  return path.join(process.cwd(), "dist");
+}
 
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
 
-  // Railway uses this route to verify that the service is ready.
-  app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, service: "shine-body-ai" });
-  });
-
-  // Set limits for base64 food image payloads
-  app.use(express.json({ limit: "15mb" }));
-
-  app.all("/api/data", (req, res) => {
-    void handleUserData(req, res);
-  });
-
-  const analysisRequests = new Map<string, { count: number; resetAt: number }>();
-  const tooManyRequests = (req: express.Request) => {
-    const now = Date.now();
-    const client = req.ip || req.socket.remoteAddress || "unknown";
-    const usage = analysisRequests.get(client);
-    if (!usage || usage.resetAt <= now) {
-      analysisRequests.set(client, { count: 1, resetAt: now + 60 * 60 * 1000 });
-      return false;
+  app.use(express.json({ limit: "16mb" }));
+  app.use((error: { type?: string }, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (error?.type === "entity.too.large") {
+      res.status(413).json({ error: "照片檔案太大，請重新選擇照片。" });
+      return;
     }
-    if (usage.count >= 20) return true;
-    usage.count += 1;
-    return false;
-  };
+    next(error);
+  });
 
-  app.post("/api/analyze-food", async (req, res) => {
+  app.use(async (req, res, next) => {
+    const denied = authorizeRequest(toWebRequest(req, false), process.env.APP_ACCESS_CODE || "");
+    if (!denied) {
+      next();
+      return;
+    }
+    await writeNodeResponse(res, denied);
+  });
+
+  app.use("/api", async (req, res) => {
     try {
-      if (tooManyRequests(req)) {
-        return res.status(429).json({ error: "分析次數過多，請一小時後再試。" });
-      }
-      if (!hasCloudflareCredentials()) {
-        return res.status(500).json({ error: MISSING_CLOUDFLARE_CREDS_ERROR });
-      }
-
-      const { image, mimeType } = req.body || {};
-      if (!image || typeof image !== "string") {
-        return res.status(400).json({ error: "請提供食物照片。" });
-      }
-
-      const result = await analyzeFoodImage(image, mimeType);
-      return res.json(result);
-    } catch (err: any) {
-      console.error("AI Analysis error:", err);
-      return res.status(500).json({ error: `AI 照片分析失敗: ${err?.message || err}` });
+      const response = await handleApi(toWebRequest(req, true), runtimeEnv());
+      await writeNodeResponse(res, response);
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "express_api_failed",
+        message: error instanceof Error ? error.message : "unknown"
+      }));
+      if (!res.headersSent) res.status(500).json({ error: "伺服器錯誤。" });
     }
   });
 
-  app.post("/api/analyze-food-text", async (req, res) => {
-    try {
-      if (tooManyRequests(req)) {
-        return res.status(429).json({ error: "分析次數過多，請一小時後再試。" });
-      }
-      if (!hasCloudflareCredentials()) {
-        return res.status(500).json({ error: MISSING_CLOUDFLARE_CREDS_ERROR });
-      }
-
-      const { text, followUpAnswer, previous } = req.body || {};
-      if (!text || typeof text !== "string" || !text.trim()) {
-        return res.status(400).json({ error: "請輸入餐點名稱或描述。" });
-      }
-      if (text.length > 500) {
-        return res.status(400).json({ error: "餐點描述請控制在 500 字以內。" });
-      }
-
-      const result = await analyzeFoodText(text, followUpAnswer, previous);
-      return res.json(result);
-    } catch (err: any) {
-      console.error("AI text food analysis error:", err);
-      return res.status(500).json({ error: `AI 飲食查詢失敗: ${err?.message || err}` });
-    }
-  });
-
-  // Vite development middleware vs Static Production files
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
+    const [{ default: react }, { default: tailwindcss }, { createServer }] = await Promise.all([
+      import("@vitejs/plugin-react"),
+      import("@tailwindcss/vite"),
+      import("vite")
+    ]);
+    const vite = await createServer({
+      configFile: false,
       server: { middlewareMode: true },
       appType: "spa",
+      plugins: [react(), tailwindcss()],
+      resolve: {
+        alias: { "@": path.resolve(".") }
+      }
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const distPath = clientDist();
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));

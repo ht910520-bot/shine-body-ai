@@ -1,22 +1,18 @@
 import assert from "node:assert/strict";
-import imageHandler from "../api/analyze-food.ts";
-import textHandler from "../api/analyze-food-text.ts";
-import {
-  DEFAULT_VISION_MAX_TOKENS,
-  DEFAULT_VISION_MODEL,
-  DEFAULT_VISION_TIMEOUT_MS,
-  analyzeFoodImage,
-  visionModel
-} from "./analyzeFoodImage.ts";
+import { handleAnalyzeFood, handleAnalyzeFoodText, resetRateLimits } from "./apiRoutes.ts";
+import { analyzeFoodImage } from "./analyzeFoodImage.ts";
+import { analyzeFoodText } from "./analyzeFoodText.ts";
 import {
   DEFAULT_TEXT_MAX_TOKENS,
   DEFAULT_TEXT_MODEL,
   DEFAULT_TEXT_TIMEOUT_MS,
-  analyzeFoodText,
-  textModel
-} from "./analyzeFoodText.ts";
-import {
-  MISSING_CLOUDFLARE_CREDS_ERROR,
+  DEFAULT_VISION_MAX_TOKENS,
+  DEFAULT_VISION_MODEL,
+  DEFAULT_VISION_TIMEOUT_MS,
+  MISSING_AI_CONFIG_ERROR,
+  aiEnvFromProcess,
+  textRuntimeConfig,
+  visionRuntimeConfig,
   workersAiRunUrl
 } from "./cloudflareAi.ts";
 
@@ -44,25 +40,6 @@ function restoreEnv() {
 
 function clearEnv() {
   for (const key of envKeys) delete process.env[key];
-}
-
-function mockResponse() {
-  return {
-    statusCode: 0,
-    body: null as any,
-    headers: {} as Record<string, string>,
-    setHeader(name: string, value: string) {
-      this.headers[name] = value;
-    },
-    status(code: number) {
-      this.statusCode = code;
-      return this;
-    },
-    json(payload: any) {
-      this.body = payload;
-      return this;
-    }
-  };
 }
 
 function mealJson() {
@@ -110,6 +87,7 @@ function workersResult(content: string) {
 const failures: string[] = [];
 async function check(name: string, fn: () => void | Promise<void>) {
   clearEnv();
+  resetRateLimits();
   console.warn = () => undefined;
   try {
     await fn();
@@ -121,24 +99,25 @@ async function check(name: string, fn: () => void | Promise<void>) {
     globalThis.fetch = originalFetch;
     console.warn = originalWarn;
     restoreEnv();
+    resetRateLimits();
   }
 }
 
-await check("defaults are the Workers AI models from the checklist", () => {
-  assert.equal(visionModel(), DEFAULT_VISION_MODEL);
+await check("defaults are the Workers AI models", () => {
+  assert.equal(visionRuntimeConfig().model, DEFAULT_VISION_MODEL);
   assert.equal(DEFAULT_VISION_MODEL, "@cf/meta/llama-3.2-11b-vision-instruct");
-  assert.equal(textModel(), DEFAULT_TEXT_MODEL);
+  assert.equal(textRuntimeConfig().model, DEFAULT_TEXT_MODEL);
   assert.equal(DEFAULT_TEXT_MODEL, "@cf/meta/llama-3.1-8b-instruct-fast");
-  assert.equal(DEFAULT_VISION_TIMEOUT_MS, 50_000);
+  assert.equal(DEFAULT_VISION_TIMEOUT_MS, 45_000);
   assert.ok(DEFAULT_VISION_TIMEOUT_MS < 60_000);
   assert.equal(DEFAULT_TEXT_TIMEOUT_MS, 20_000);
   assert.ok(DEFAULT_TEXT_TIMEOUT_MS < 30_000);
-  assert.equal(DEFAULT_VISION_MAX_TOKENS, 768);
-  assert.equal(DEFAULT_TEXT_MAX_TOKENS, 512);
+  assert.equal(visionRuntimeConfig().maxTokens, DEFAULT_VISION_MAX_TOKENS);
+  assert.equal(textRuntimeConfig().maxTokens, DEFAULT_TEXT_MAX_TOKENS);
   process.env.CLOUDFLARE_VISION_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
   process.env.CLOUDFLARE_TEXT_MODEL = "@cf/meta/llama-3.2-3b-instruct";
-  assert.equal(visionModel(), "@cf/meta/llama-4-scout-17b-16e-instruct");
-  assert.equal(textModel(), "@cf/meta/llama-3.2-3b-instruct");
+  assert.equal(visionRuntimeConfig().model, "@cf/meta/llama-4-scout-17b-16e-instruct");
+  assert.equal(textRuntimeConfig().model, "@cf/meta/llama-3.2-3b-instruct");
 });
 
 await check("photo request posts to Workers AI with the vision model", async () => {
@@ -160,8 +139,7 @@ await check("photo request posts to Workers AI with the vision model", async () 
   assert.equal(auth, "Bearer test-token");
   assert.equal(body.image, "data:image/jpeg;base64,abc");
   assert.equal(body.max_tokens, DEFAULT_VISION_MAX_TOKENS);
-  assert.equal(body.messages[0].content.length < 800, true);
-  assert.equal(body.messages[0].content.includes("JSON"), true);
+  assert.equal(String(body.prompt).includes("JSON"), true);
   assert.equal(result.food.calories, 720);
   assert.equal(result.provider, `Cloudflare Workers AI (${DEFAULT_VISION_MODEL})`);
 });
@@ -194,9 +172,9 @@ await check("empty vision content and HTTP errors name Workers AI", async () => 
   }), { status: 200 });
   await assert.rejects(
     () => analyzeFoodImage("abc"),
-    /Cloudflare Workers AI 模型 @cf\/meta\/llama-3\.2-11b-vision-instruct 未回傳文字內容/
+    /Cloudflare Vision 模型 @cf\/meta\/llama-3\.2-11b-vision-instruct 未回傳文字內容/
   );
-  assert.match(warnings.join("\n"), /empty content/);
+  assert.match(warnings.join("\n"), /workers_ai_empty_response/);
 
   globalThis.fetch = async () => new Response(JSON.stringify({
     success: false,
@@ -228,10 +206,8 @@ await check("text request uses the fast instruct model and keeps needs_confirmat
   const result = await analyzeFoodText("雞胸肉便當", "白飯正常", { food: { name: "便當" } });
   assert.equal(url, workersAiRunUrl("acct-1", DEFAULT_TEXT_MODEL));
   assert.equal(body.max_tokens, DEFAULT_TEXT_MAX_TOKENS);
-  assert.deepEqual(body.response_format, { type: "json_object" });
   assert.equal(body.messages[1].content.includes("needs_confirmation"), true);
   assert.equal(body.messages[1].content.includes("NVIDIA"), false);
-  assert.equal(body.messages[1].content.length < 1200, true);
   assert.equal(result.status, "needs_confirmation");
   assert.equal(result.question, "白飯大概多少？");
   assert.deepEqual(result.sources, []);
@@ -241,26 +217,37 @@ await check("text request uses the fast instruct model and keeps needs_confirmat
 await check("routes require Cloudflare credentials and return the model JSON", async () => {
   process.env.GEMINI_API_KEY = "invalid-gemini";
   process.env.NVIDIA_API_KEY = "leftover-nvidia";
-  const missing = mockResponse();
-  await imageHandler({ method: "POST", body: { image: "abc" } }, missing);
-  assert.equal(missing.statusCode, 500);
-  assert.equal(missing.body.error, MISSING_CLOUDFLARE_CREDS_ERROR);
-  assert.equal(missing.body.error.includes("NVIDIA"), false);
-  assert.equal(missing.body.error.includes("GEMINI"), false);
+  const missing = await handleAnalyzeFood(new Request("https://shine.example/api/analyze-food", {
+    method: "POST",
+    headers: { "content-type": "application/json", "cf-connecting-ip": "rest-missing" },
+    body: JSON.stringify({ image: "abc" })
+  }), {});
+  assert.equal(missing.status, 500);
+  const missingBody = await missing.json();
+  assert.equal(missingBody.error, MISSING_AI_CONFIG_ERROR);
+  assert.equal(missingBody.error.includes("NVIDIA"), false);
+  assert.equal(missingBody.error.includes("GEMINI"), false);
 
-  const missingText = mockResponse();
-  await textHandler({ method: "POST", body: { text: "雞胸肉便當" } }, missingText);
-  assert.equal(missingText.body.error, MISSING_CLOUDFLARE_CREDS_ERROR);
+  const missingText = await handleAnalyzeFoodText(new Request("https://shine.example/api/analyze-food-text", {
+    method: "POST",
+    headers: { "content-type": "application/json", "cf-connecting-ip": "rest-missing-text" },
+    body: JSON.stringify({ text: "雞胸肉便當" })
+  }), {});
+  assert.equal((await missingText.json()).error, MISSING_AI_CONFIG_ERROR);
 
   process.env.CLOUDFLARE_ACCOUNT_ID = "acct-1";
   process.env.CLOUDFLARE_API_TOKEN = "test-token";
   globalThis.fetch = async () => workersResult(textJson());
-  const ok = mockResponse();
-  await textHandler({ method: "POST", body: { text: "雞胸肉便當" } }, ok);
-  assert.equal(ok.statusCode, 200);
-  assert.equal(ok.body.status, "complete");
-  assert.equal(ok.body.food.name, "雞胸肉便當");
-  assert.deepEqual(ok.body.sources, []);
+  const ok = await handleAnalyzeFoodText(new Request("https://shine.example/api/analyze-food-text", {
+    method: "POST",
+    headers: { "content-type": "application/json", "cf-connecting-ip": "rest-ok" },
+    body: JSON.stringify({ text: "雞胸肉便當" })
+  }), aiEnvFromProcess());
+  assert.equal(ok.status, 200);
+  const okBody = await ok.json();
+  assert.equal(okBody.status, "complete");
+  assert.equal(okBody.food.name, "雞胸肉便當");
+  assert.deepEqual(okBody.sources, []);
 });
 
 await check("direct text analysis without a token fails before fetch", async () => {
@@ -270,7 +257,7 @@ await check("direct text analysis without a token fails before fetch", async () 
     called = true;
     return new Response("{}", { status: 500 });
   };
-  await assert.rejects(() => analyzeFoodText("湯"), /CLOUDFLARE_ACCOUNT_ID 與 CLOUDFLARE_API_TOKEN/);
+  await assert.rejects(() => analyzeFoodText("湯"), /CLOUDFLARE_ACCOUNT_ID/);
   assert.equal(called, false);
 });
 

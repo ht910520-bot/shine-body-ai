@@ -131,6 +131,14 @@ export class UpstashRedisStorage implements DataStorage {
   }
 }
 
+export interface StorageEnv {
+  DATA_STORAGE_ADAPTER?: string;
+  UPSTASH_REDIS_REST_URL?: string;
+  UPSTASH_REDIS_REST_TOKEN?: string;
+  KV_REST_API_URL?: string;
+  KV_REST_API_TOKEN?: string;
+}
+
 function credentialPair(url: string | undefined, token: string | undefined) {
   const trimmedUrl = url?.trim() || "";
   const trimmedToken = token?.trim() || "";
@@ -138,14 +146,14 @@ function credentialPair(url: string | undefined, token: string | undefined) {
   return { url: trimmedUrl, token: trimmedToken };
 }
 
-// Vercel Marketplace injects KV_REST_API_*. UPSTASH_REDIS_REST_* is the same
-// Upstash REST API under the names used outside that integration.
-export function upstashRestCredentials(env: NodeJS.ProcessEnv): { url: string; token: string } | null {
+// KV_REST_API_* and UPSTASH_REDIS_REST_* are the same Upstash REST API.
+// UPSTASH_REDIS_REST_* wins when both pairs are set.
+export function upstashRestCredentials(env: StorageEnv): { url: string; token: string } | null {
   return credentialPair(env.UPSTASH_REDIS_REST_URL, env.UPSTASH_REDIS_REST_TOKEN)
     || credentialPair(env.KV_REST_API_URL, env.KV_REST_API_TOKEN);
 }
 
-export function createDataStorage(env: NodeJS.ProcessEnv = process.env): DataStorage {
+export function createDataStorage(env: StorageEnv = process.env): DataStorage {
   const adapter = (env.DATA_STORAGE_ADAPTER || "").trim().toLowerCase();
   const credentials = upstashRestCredentials(env);
   const useUpstash = adapter === "upstash" || (adapter === "" && credentials !== null);

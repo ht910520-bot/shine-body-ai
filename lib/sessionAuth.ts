@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 const COOKIE_NAME = "shine_auth";
 
-// Same SHA-256 hex digest login.ts stores in the shine_auth cookie and middleware.ts compares.
+// Same SHA-256 hex digest the login route stores in the shine_auth cookie.
 export function sessionTokenFor(accessCode: string) {
   return createHash("sha256").update(accessCode).digest("hex");
 }
@@ -27,8 +27,7 @@ function headerText(value: string | string[] | undefined) {
   return value || "";
 }
 
-export function isValidSession(cookieHeader: string | string[] | undefined) {
-  const accessCode = process.env.APP_ACCESS_CODE || "";
+export function isValidSession(cookieHeader: string | string[] | undefined, accessCode = process.env.APP_ACCESS_CODE || "") {
   if (!accessCode) return false;
   const expected = sessionTokenFor(accessCode);
   const actual = readCookie(headerText(cookieHeader), COOKIE_NAME);
