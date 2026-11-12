@@ -27,7 +27,8 @@
     }
   ],
   "vars": {
-    "CLOUDFLARE_VISION_MODEL": "@cf/meta/llama-3.2-11b-vision-instruct",
+    "CLOUDFLARE_VISION_MODEL": "@cf/google/gemma-4-26b-a4b-it",
+    "CLOUDFLARE_VISION_FALLBACK_MODELS": "@cf/mistralai/mistral-small-3.1-24b-instruct,@cf/meta/llama-3.2-11b-vision-instruct",
     "CLOUDFLARE_TEXT_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast"
   },
   // A single-user app: keep logs and traces so AI and auth failures are visible.

@@ -11,7 +11,10 @@ import {
 import { authorizeRequest } from "./accessGate.ts";
 import {
   DEFAULT_TEXT_MODEL,
+  DEFAULT_VISION_FALLBACK_MODELS,
+  DEFAULT_VISION_MAX_TOKENS,
   DEFAULT_VISION_MODEL,
+  DEFAULT_VISION_TIMEOUT_MS,
   MISSING_AI_CONFIG_ERROR,
   textRuntimeConfig,
   visionRuntimeConfig
@@ -21,20 +24,25 @@ import { analyzeFoodText } from "./analyzeFoodText.ts";
 import { sessionTokenFor } from "./sessionAuth.ts";
 
 const originalFetch = globalThis.fetch;
+const originalWarn = console.warn;
 const failures: string[] = [];
 
 function mealJson() {
   return JSON.stringify({
-    items: [{ name: "雞腿飯", calories: 720, protein: 32, carbs: 80, fat: 24 }],
-    totalCalories: 720,
-    confidence: "medium",
-    notes: "白飯約一碗",
+    items: [
+      { name: "白醬四種起司披薩", portion: "3片", grams: 240, calories: 760, protein: 32, carbs: 68, fat: 40 },
+      { name: "法式布丁塔", portion: "1片", grams: 140, calories: 430, protein: 9, carbs: 48, fat: 22 },
+      { name: "白開水", portion: "1杯", grams: 250, calories: 0, protein: 0, carbs: 0, fat: 0 }
+    ],
+    totalCalories: 999,
+    confidence: "high",
+    notes: "依盤面可見份量估算",
     food: {
-      name: "雞腿飯",
-      calories: 720,
-      protein: 32,
-      carbs: 80,
-      fat: 24,
+      name: "照片餐點",
+      calories: 999,
+      protein: 10,
+      carbs: 10,
+      fat: 10,
       description: "依照片可見份量估算"
     }
   });
@@ -59,6 +67,7 @@ function textJson(status = "complete", question = "") {
 
 async function check(name: string, fn: () => void | Promise<void>) {
   resetRateLimits();
+  console.warn = () => undefined;
   try {
     await fn();
     console.log(`ok ${name}`);
@@ -67,6 +76,7 @@ async function check(name: string, fn: () => void | Promise<void>) {
     console.error(`not ok ${name}`);
   } finally {
     globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
     resetRateLimits();
   }
 }
@@ -121,34 +131,65 @@ await check("pages stay behind the same login gate", async () => {
   assert.equal(authorizeRequest(new Request("https://shine.example/login"), accessCode), null);
 });
 
-await check("vision defaults and clamps use the Workers AI model", () => {
-  assert.equal(visionRuntimeConfig().model, DEFAULT_VISION_MODEL);
-  assert.equal(DEFAULT_VISION_MODEL, "@cf/meta/llama-3.2-11b-vision-instruct");
-  assert.equal(visionRuntimeConfig().maxTokens, 2_048);
-  assert.equal(visionRuntimeConfig({
-    CLOUDFLARE_VISION_MODEL: "@cf/meta/llama-4-scout-17b-16e-instruct",
+await check("vision defaults, fallback chain, deduplication and clamps use Workers AI models", () => {
+  const defaults = visionRuntimeConfig({});
+  assert.equal(defaults.model, DEFAULT_VISION_MODEL);
+  assert.equal(DEFAULT_VISION_MODEL, "@cf/google/gemma-4-26b-a4b-it");
+  assert.equal(DEFAULT_VISION_FALLBACK_MODELS, "@cf/mistralai/mistral-small-3.1-24b-instruct,@cf/meta/llama-3.2-11b-vision-instruct");
+  assert.deepEqual(defaults.models, [
+    "@cf/google/gemma-4-26b-a4b-it",
+    "@cf/mistralai/mistral-small-3.1-24b-instruct",
+    "@cf/meta/llama-3.2-11b-vision-instruct"
+  ]);
+  assert.deepEqual(defaults.fallbackModels, [
+    "@cf/mistralai/mistral-small-3.1-24b-instruct",
+    "@cf/meta/llama-3.2-11b-vision-instruct"
+  ]);
+  assert.equal(defaults.maxTokens, DEFAULT_VISION_MAX_TOKENS);
+  assert.equal(defaults.maxTokens, 1_500);
+  assert.equal(defaults.timeoutMs, DEFAULT_VISION_TIMEOUT_MS);
+  assert.equal(defaults.timeoutMs, 30_000);
+
+  const deduped = visionRuntimeConfig({
+    CLOUDFLARE_VISION_MODEL: "@cf/mistralai/mistral-small-3.1-24b-instruct",
+    CLOUDFLARE_VISION_FALLBACK_MODELS: "@cf/mistralai/mistral-small-3.1-24b-instruct, @cf/meta/llama-3.2-11b-vision-instruct , @cf/meta/llama-3.2-11b-vision-instruct",
     CLOUDFLARE_VISION_MAX_TOKENS: "20",
     CLOUDFLARE_VISION_TIMEOUT_MS: "90000"
-  }).model, "@cf/meta/llama-4-scout-17b-16e-instruct");
-  assert.equal(visionRuntimeConfig({ CLOUDFLARE_VISION_MAX_TOKENS: "20" }).maxTokens, 256);
-  assert.equal(visionRuntimeConfig({ CLOUDFLARE_VISION_TIMEOUT_MS: "90000" }).timeoutMs, 55_000);
+  });
+  assert.equal(deduped.model, "@cf/mistralai/mistral-small-3.1-24b-instruct");
+  assert.deepEqual(deduped.models, [
+    "@cf/mistralai/mistral-small-3.1-24b-instruct",
+    "@cf/meta/llama-3.2-11b-vision-instruct"
+  ]);
+  assert.equal(deduped.maxTokens, 256);
+  assert.equal(deduped.timeoutMs, 55_000);
+
+  assert.throws(
+    () => visionRuntimeConfig({ CLOUDFLARE_VISION_FALLBACK_MODELS: "invalid-model-id" }),
+    /不支援的 Cloudflare 模型 ID/
+  );
+
   assert.equal(textRuntimeConfig().model, DEFAULT_TEXT_MODEL);
   assert.equal(DEFAULT_TEXT_MODEL, "@cf/meta/llama-3.1-8b-instruct-fast");
   assert.equal(textRuntimeConfig({ CLOUDFLARE_TEXT_MAX_TOKENS: "9000" }).maxTokens, 4_096);
   assert.equal(textRuntimeConfig({ CLOUDFLARE_TEXT_TIMEOUT_MS: "1000" }).timeoutMs, 3_000);
 });
 
-await check("REST credentials are preferred over the AI binding", async () => {
+await check("REST credentials are preferred over the AI binding and use single-stage gemma vision JSON", async () => {
   let restCalls = 0;
   let bindingCalls = 0;
-  globalThis.fetch = async (_input, init) => {
+  globalThis.fetch = async (input, init) => {
     restCalls += 1;
+    assert.match(String(input), /@cf\/google\/gemma-4-26b-a4b-it$/);
     const body = JSON.parse(String(init?.body || "{}"));
-    if (body.image) {
-      assert.match(String(body.prompt), /不要估算熱量/);
-      return new Response(JSON.stringify({ success: true, result: { response: "牛排一份，搭配馬鈴薯與蔬菜" } }), { status: 200 });
-    }
-    return new Response(JSON.stringify({ success: true, result: { response: mealJson() } }), { status: 200 });
+    assert.deepEqual(body.chat_template_kwargs, { enable_thinking: false });
+    assert.equal(body.response_format?.type, "json_schema");
+    assert.ok(body.response_format?.json_schema);
+    assert.equal(body.messages?.[1]?.content?.[1]?.image_url?.url, "data:image/png;base64,abc");
+    return new Response(JSON.stringify({
+      success: true,
+      result: { choices: [{ message: { content: mealJson() } }] }
+    }), { status: 200 });
   };
   const result = await analyzeFoodImage("abc", "image/png", {
     AI: {
@@ -160,10 +201,18 @@ await check("REST credentials are preferred over the AI binding", async () => {
     CLOUDFLARE_ACCOUNT_ID: "account",
     CLOUDFLARE_API_TOKEN: "secret-token"
   });
-  assert.ok(restCalls >= 2);
+  assert.equal(restCalls, 1);
   assert.equal(bindingCalls, 0);
-  assert.equal(result.food.calories, 720);
-  assert.match(result.provider, /llama-3\.2-11b-vision-instruct/);
+  assert.equal(result.items.length, 2);
+  assert.equal(result.totalCalories, 1190);
+  assert.equal(result.food.calories, 1190);
+  assert.equal(result.food.protein, 41);
+  assert.equal(result.food.carbs, 116);
+  assert.equal(result.food.fat, 62);
+  assert.equal(result.food.name, "白醬四種起司披薩、法式布丁塔");
+  assert.match(result.food.description, /白醬四種起司披薩（3片，約 240g）/);
+  assert.match(result.food.description, /法式布丁塔（1片，約 140g）/);
+  assert.equal(result.provider, "Cloudflare Workers AI (@cf/google/gemma-4-26b-a4b-it)");
   assert.match(result.notes, /Cloudflare Workers AI/);
 });
 
@@ -206,7 +255,7 @@ await check("REST is the fallback and keeps needs_confirmation", async () => {
   assert.match(result.notes, /未連接即時網路搜尋/);
 });
 
-await check("photo route reports an empty model response and blocks zero calories", async () => {
+await check("photo route reports an empty model response and blocks zero calories without doubled prefix", async () => {
   const missing = await handleAnalyzeFood(new Request("https://shine.example/api/analyze-food", {
     method: "POST",
     headers: { "content-type": "application/json", "cf-connecting-ip": "photo-missing" },
@@ -228,7 +277,10 @@ await check("photo route reports an empty model response and blocks zero calorie
     body: JSON.stringify({ image: "abc", mimeType: "image/jpeg" })
   }), env);
   assert.equal(empty.status, 500);
-  assert.match((await empty.json()).error, /未回傳文字內容/);
+  const emptyError = (await empty.json()).error as string;
+  assert.match(emptyError, /^AI 照片分析失敗：所有模型都沒有回傳可用的結果/);
+  assert.equal(emptyError.includes("AI 照片分析失敗: AI 照片分析失敗"), false);
+  assert.match(emptyError, /未回傳文字內容/);
 
   const zero = await handleAnalyzeFood(new Request("https://shine.example/api/analyze-food", {
     method: "POST",
@@ -241,7 +293,9 @@ await check("photo route reports an empty model response and blocks zero calorie
       }
     }
   });
-  assert.match((await zero.json()).error, /0 kcal/);
+  const zeroError = (await zero.json()).error as string;
+  assert.match(zeroError, /0 kcal/);
+  assert.equal(zeroError.includes("AI 照片分析失敗: AI 照片分析失敗"), false);
 });
 
 await check("analysis stays near twenty requests per hour per client", async () => {

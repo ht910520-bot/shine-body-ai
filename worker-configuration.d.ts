@@ -4,7 +4,8 @@ interface __BaseEnv_Env {
 	SHINE_DATA: KVNamespace;
 	AI: Ai;
 	ASSETS: Fetcher;
-	CLOUDFLARE_VISION_MODEL: "@cf/meta/llama-3.2-11b-vision-instruct";
+	CLOUDFLARE_VISION_MODEL: "@cf/google/gemma-4-26b-a4b-it";
+	CLOUDFLARE_VISION_FALLBACK_MODELS: "@cf/mistralai/mistral-small-3.1-24b-instruct,@cf/meta/llama-3.2-11b-vision-instruct";
 	CLOUDFLARE_TEXT_MODEL: "@cf/meta/llama-3.1-8b-instruct-fast";
 }
 declare namespace Cloudflare {
@@ -18,7 +19,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "CLOUDFLARE_VISION_MODEL" | "CLOUDFLARE_TEXT_MODEL">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "CLOUDFLARE_VISION_MODEL" | "CLOUDFLARE_VISION_FALLBACK_MODELS" | "CLOUDFLARE_TEXT_MODEL">> {}
 }
 declare module "*.txt" {
 	const value: string;

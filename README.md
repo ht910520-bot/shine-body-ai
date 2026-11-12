@@ -67,7 +67,8 @@ Runtime secrets are not build variables. Set them under the Worker **Settings â†
 | Name | Required on the Worker | Purpose |
 | --- | --- | --- |
 | `APP_ACCESS_CODE` | Yes | Existing shared login password. Secret. |
-| `CLOUDFLARE_VISION_MODEL` | No | Default `@cf/meta/llama-3.2-11b-vision-instruct` in `wrangler.jsonc`. |
+| `CLOUDFLARE_VISION_MODEL` | No | Default `@cf/google/gemma-4-26b-a4b-it` in `wrangler.jsonc`. |
+| `CLOUDFLARE_VISION_FALLBACK_MODELS` | No | Comma-separated fallback vision models. Default `@cf/mistralai/mistral-small-3.1-24b-instruct,@cf/meta/llama-3.2-11b-vision-instruct` in `wrangler.jsonc`. |
 | `CLOUDFLARE_TEXT_MODEL` | No | Default `@cf/meta/llama-3.1-8b-instruct-fast` in `wrangler.jsonc`. |
 | `UPSTASH_REDIS_REST_URL` | No | Optional cloud sync. Secret, with its token. |
 | `UPSTASH_REDIS_REST_TOKEN` | No | Pairs with the URL above. |
@@ -79,7 +80,7 @@ Runtime secrets are not build variables. Set them under the Worker **Settings â†
 
 On the Worker, `env.AI.run` is used for every analysis. The REST token is not read unless the `AI` binding is absent.
 
-Optional tuning secrets: `CLOUDFLARE_VISION_MAX_TOKENS` (default 2048), `CLOUDFLARE_VISION_TIMEOUT_MS` (default 45000), `CLOUDFLARE_TEXT_MAX_TOKENS` (default 1200), `CLOUDFLARE_TEXT_TIMEOUT_MS` (default 20000).
+Optional tuning secrets: `CLOUDFLARE_VISION_MAX_TOKENS` (default 1500), `CLOUDFLARE_VISION_TIMEOUT_MS` (default 30000), `CLOUDFLARE_TEXT_MAX_TOKENS` (default 1200), `CLOUDFLARE_TEXT_TIMEOUT_MS` (default 20000).
 
 Add a custom domain from the dashboard or with a `routes` / `workers_dev` change in `wrangler.jsonc`. Preview URLs from Workers Builds are public unless you put Cloudflare Access in front of them.
 
