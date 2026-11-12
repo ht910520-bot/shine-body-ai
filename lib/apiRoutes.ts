@@ -130,7 +130,8 @@ export async function handleAnalyzeFood(request: Request, env: RuntimeEnv) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(JSON.stringify({ event: "analyze_food_failed", message }));
-    return json({ error: `AI 照片分析失敗: ${message}` }, 500);
+    const errorText = /^AI\s*照片分析失敗\s*[：:]/.test(message) ? message : `AI 照片分析失敗: ${message}`;
+    return json({ error: errorText }, 500);
   }
 }
 

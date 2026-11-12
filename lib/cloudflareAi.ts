@@ -1,8 +1,10 @@
-export const DEFAULT_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
+export const DEFAULT_VISION_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+export const DEFAULT_VISION_FALLBACK_MODELS = "@cf/mistralai/mistral-small-3.1-24b-instruct,@cf/meta/llama-3.2-11b-vision-instruct";
 export const DEFAULT_TEXT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
-export const DEFAULT_VISION_MAX_TOKENS = 2_048;
+export const DEFAULT_VISION_MAX_TOKENS = 1_500;
 export const DEFAULT_TEXT_MAX_TOKENS = 1_200;
-export const DEFAULT_VISION_TIMEOUT_MS = 45_000;
+export const DEFAULT_VISION_TIMEOUT_MS = 30_000;
+export const DEFAULT_VISION_BUDGET_MS = 55_000;
 export const DEFAULT_TEXT_TIMEOUT_MS = 20_000;
 export const MISSING_AI_CONFIG_ERROR = "伺服器尚未設定 Cloudflare Workers AI（需要 AI binding，或 CLOUDFLARE_ACCOUNT_ID 與 CLOUDFLARE_API_TOKEN）。";
 
@@ -23,6 +25,7 @@ export interface AiEnv {
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_API_TOKEN?: string;
   CLOUDFLARE_VISION_MODEL?: string;
+  CLOUDFLARE_VISION_FALLBACK_MODELS?: string;
   CLOUDFLARE_TEXT_MODEL?: string;
   CLOUDFLARE_VISION_MAX_TOKENS?: string;
   CLOUDFLARE_TEXT_MAX_TOKENS?: string;
@@ -49,6 +52,7 @@ export function aiEnvFromProcess(env: NodeJS.ProcessEnv = process.env): AiEnv {
     CLOUDFLARE_ACCOUNT_ID: accountId || undefined,
     CLOUDFLARE_API_TOKEN: apiToken || undefined,
     CLOUDFLARE_VISION_MODEL: env.CLOUDFLARE_VISION_MODEL,
+    CLOUDFLARE_VISION_FALLBACK_MODELS: env.CLOUDFLARE_VISION_FALLBACK_MODELS,
     CLOUDFLARE_TEXT_MODEL: env.CLOUDFLARE_TEXT_MODEL,
     CLOUDFLARE_VISION_MAX_TOKENS: env.CLOUDFLARE_VISION_MAX_TOKENS,
     CLOUDFLARE_TEXT_MAX_TOKENS: env.CLOUDFLARE_TEXT_MAX_TOKENS,
@@ -68,9 +72,36 @@ function clampNumber(value: string | undefined, fallback: number, min: number, m
   return Math.min(Math.max(configured, min), max);
 }
 
+export function assertModelId(model: string) {
+  if (!MODEL_ID.test(model)) throw new Error(`不支援的 Cloudflare 模型 ID：${model}`);
+  return model;
+}
+
+export function parseVisionModelChain(env: AiEnv = aiEnvFromProcess()): string[] {
+  const primary = assertModelId(env.CLOUDFLARE_VISION_MODEL?.trim() || DEFAULT_VISION_MODEL);
+  const rawFallbacks = env.CLOUDFLARE_VISION_FALLBACK_MODELS === undefined
+    ? DEFAULT_VISION_FALLBACK_MODELS
+    : env.CLOUDFLARE_VISION_FALLBACK_MODELS;
+  const seen = new Set<string>([primary]);
+  const models = [primary];
+  for (const part of rawFallbacks.split(",")) {
+    const candidate = part.trim();
+    if (!candidate) continue;
+    assertModelId(candidate);
+    if (!seen.has(candidate)) {
+      seen.add(candidate);
+      models.push(candidate);
+    }
+  }
+  return models;
+}
+
 export function visionRuntimeConfig(env: AiEnv = aiEnvFromProcess()) {
+  const models = parseVisionModelChain(env);
   return {
-    model: env.CLOUDFLARE_VISION_MODEL?.trim() || DEFAULT_VISION_MODEL,
+    model: models[0],
+    fallbackModels: models.slice(1),
+    models,
     timeoutMs: clampNumber(env.CLOUDFLARE_VISION_TIMEOUT_MS, DEFAULT_VISION_TIMEOUT_MS, MIN_VISION_TIMEOUT_MS, MAX_VISION_TIMEOUT_MS),
     maxTokens: Math.round(clampNumber(env.CLOUDFLARE_VISION_MAX_TOKENS, DEFAULT_VISION_MAX_TOKENS, MIN_MAX_TOKENS, MAX_MAX_TOKENS))
   };
@@ -82,11 +113,6 @@ export function textRuntimeConfig(env: AiEnv = aiEnvFromProcess()) {
     timeoutMs: clampNumber(env.CLOUDFLARE_TEXT_TIMEOUT_MS, DEFAULT_TEXT_TIMEOUT_MS, MIN_TEXT_TIMEOUT_MS, MAX_TEXT_TIMEOUT_MS),
     maxTokens: Math.round(clampNumber(env.CLOUDFLARE_TEXT_MAX_TOKENS, DEFAULT_TEXT_MAX_TOKENS, MIN_MAX_TOKENS, MAX_MAX_TOKENS))
   };
-}
-
-export function assertModelId(model: string) {
-  if (!MODEL_ID.test(model)) throw new Error(`不支援的 Cloudflare 模型 ID：${model}`);
-  return model;
 }
 
 function unwrapPayload(payload: unknown): unknown {
@@ -127,6 +153,7 @@ export function workersAiText(payload: unknown) {
         return typeof text === "string" ? text : "";
       }).join("\n");
     }
+    if (content && typeof content === "object") return JSON.stringify(content);
   }
   return "";
 }
@@ -135,8 +162,14 @@ export function workersAiJson(payload: unknown): Record<string, unknown> | null 
   const unwrapped = unwrapPayload(payload);
   if (!unwrapped || typeof unwrapped !== "object") return null;
   const record = unwrapped as Record<string, unknown>;
+  const choice = Array.isArray(record.choices) ? record.choices[0] : undefined;
+  const choiceContent = choice && typeof choice === "object"
+    ? (choice as { message?: { content?: unknown } }).message?.content
+    : undefined;
   const candidate = record.response && typeof record.response === "object" ? record.response
-    : record.result && typeof record.result === "object" ? record.result : record;
+    : record.result && typeof record.result === "object" ? record.result
+    : choiceContent && typeof choiceContent === "object" && !Array.isArray(choiceContent) ? choiceContent
+    : record;
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
   const value = candidate as Record<string, unknown>;
   return ("items" in value || "food" in value || "totalCalories" in value) ? value : null;
@@ -189,7 +222,14 @@ export async function runWorkersAi(model: string, input: Record<string, unknown>
   });
 
   try {
-    const pending = env.AI ? env.AI.run(model, input) : runRest(model, input, env, timeoutMs);
+    // Prefer REST when account+token are set so photo nutrition matches the
+    // verified local path. The Workers AI binding remains the fallback.
+    const canRest = Boolean(env.CLOUDFLARE_ACCOUNT_ID?.trim() && env.CLOUDFLARE_API_TOKEN?.trim());
+    const pending = canRest
+      ? runRest(model, input, env, timeoutMs)
+      : env.AI
+        ? env.AI.run(model, input)
+        : runRest(model, input, env, timeoutMs);
     return await Promise.race([pending, timeout]);
   } catch (error) {
     if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {

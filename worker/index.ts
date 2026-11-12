@@ -21,6 +21,7 @@ function runtimeFromEnv(env: Env): WorkerRuntime {
     CLOUDFLARE_ACCOUNT_ID: readString(env, "CLOUDFLARE_ACCOUNT_ID") || readString(env, "CF_ACCOUNT_ID"),
     CLOUDFLARE_API_TOKEN: readString(env, "CLOUDFLARE_API_TOKEN") || readString(env, "CF_API_TOKEN") || readString(env, "CLOUDFLARE_AUTH_TOKEN"),
     CLOUDFLARE_VISION_MODEL: env.CLOUDFLARE_VISION_MODEL,
+    CLOUDFLARE_VISION_FALLBACK_MODELS: readString(env, "CLOUDFLARE_VISION_FALLBACK_MODELS"),
     CLOUDFLARE_TEXT_MODEL: env.CLOUDFLARE_TEXT_MODEL,
     CLOUDFLARE_VISION_MAX_TOKENS: readString(env, "CLOUDFLARE_VISION_MAX_TOKENS"),
     CLOUDFLARE_TEXT_MAX_TOKENS: readString(env, "CLOUDFLARE_TEXT_MAX_TOKENS"),
@@ -30,7 +31,8 @@ function runtimeFromEnv(env: Env): WorkerRuntime {
     UPSTASH_REDIS_REST_URL: readString(env, "UPSTASH_REDIS_REST_URL"),
     UPSTASH_REDIS_REST_TOKEN: readString(env, "UPSTASH_REDIS_REST_TOKEN"),
     KV_REST_API_URL: readString(env, "KV_REST_API_URL"),
-    KV_REST_API_TOKEN: readString(env, "KV_REST_API_TOKEN")
+    KV_REST_API_TOKEN: readString(env, "KV_REST_API_TOKEN"),
+    SHINE_DATA: env.SHINE_DATA
   };
 }
 

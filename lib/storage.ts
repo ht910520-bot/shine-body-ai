@@ -137,6 +137,7 @@ export interface StorageEnv {
   UPSTASH_REDIS_REST_TOKEN?: string;
   KV_REST_API_URL?: string;
   KV_REST_API_TOKEN?: string;
+  SHINE_DATA?: ShineKvNamespace;
 }
 
 function credentialPair(url: string | undefined, token: string | undefined) {
@@ -153,10 +154,47 @@ export function upstashRestCredentials(env: StorageEnv): { url: string; token: s
     || credentialPair(env.KV_REST_API_URL, env.KV_REST_API_TOKEN);
 }
 
+
+export interface ShineKvNamespace {
+  get(key: string): Promise<string | null>;
+  put(key: string, value: string): Promise<void>;
+}
+
+export class KvBindingStorage implements DataStorage {
+  constructor(private readonly kv: ShineKvNamespace) {}
+
+  async get(key: string): Promise<StoredDocument | null> {
+    const result = await this.kv.get(key);
+    if (result == null) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(result);
+    } catch {
+      throw new Error("KV returned an unreadable document");
+    }
+    const document = parseStoredDocument(parsed);
+    if (!document) throw new Error("KV returned an invalid document");
+    return document;
+  }
+
+  async saveNewer(key: string, document: StoredDocument): Promise<StoredDocument> {
+    const current = await this.get(key);
+    if (current && current.updatedAt > document.updatedAt) return current;
+    await this.kv.put(key, JSON.stringify(document));
+    return document;
+  }
+}
+
 export function createDataStorage(env: StorageEnv = process.env): DataStorage {
   const adapter = (env.DATA_STORAGE_ADAPTER || "").trim().toLowerCase();
+  if ((adapter === "" || adapter === "kv") && env.SHINE_DATA) {
+    return new KvBindingStorage(env.SHINE_DATA);
+  }
   const credentials = upstashRestCredentials(env);
   const useUpstash = adapter === "upstash" || (adapter === "" && credentials !== null);
-  if (useUpstash && credentials) return new UpstashRedisStorage(credentials.url, credentials.token);
+  if (useUpstash) {
+    if (!credentials) throw new CloudStorageNotConfiguredError();
+    return new UpstashRedisStorage(credentials.url, credentials.token);
+  }
   throw new CloudStorageNotConfiguredError();
 }
